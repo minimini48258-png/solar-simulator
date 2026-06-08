@@ -286,6 +286,7 @@ const STORAGE_KEY = 'solar-simulator-projects';
 let yearlyChart, monthlyChart, cumulativeChart;
 let monthlyYearlyData = [];
 let yearlyData = [];
+let lastChartState = null; // 棒グラフ解析の結果を保持（Y軸・月指定変更時に再計算）
 
 // ---- 写真OCR ----
 
@@ -390,12 +391,15 @@ async function runChartAnalysis(dataUrl) {
 
   // 棒の高さ検出
   const imageData = ctx.getImageData(0, 0, img.width, img.height);
-  const { values, barGroups, chartBottom } =
+  const { values, fractions, barGroups, chartBottom } =
     detectBarsFromImage(imageData, img.width, img.height, yAxisMax, colorMode);
 
   // X軸ラベルをx座標付きでOCR検出
   ocrStatus.textContent = '⏳ 月ラベルを読み取り中…';
   const monthPositions = await detectMonthPositions(img);
+
+  // 解析結果を保存（Y軸・月指定変更時に再計算するため）
+  lastChartState = { fractions, barGroups, monthPositions, imgWidth: img.width, chartBottom };
 
   // 棒のx座標と月ラベルのx座標を照合して割り当て
   const monthValues = mapBarsByPosition(values, barGroups, monthPositions, img.width);
@@ -405,8 +409,36 @@ async function runChartAnalysis(dataUrl) {
   drawBarLabels(ctx, barGroups, values, chartBottom);
 
   renderExtractedGrid(monthValues);
+  updateChartStatus(values, monthPositions, monthValues);
+  document.getElementById('ocrExtracted').style.display = 'block';
+}
 
+// Y軸最大値・最初の月変更時にグリッドを再計算して更新
+function recalcChartGrid() {
+  if (!lastChartState) return;
+  const { fractions, barGroups, monthPositions, imgWidth, chartBottom } = lastChartState;
+  const yAxisMax = parseInt(document.getElementById('yAxisMax').value) || 1200;
+  const values   = fractions.map(f => Math.round(f * yAxisMax / 5) * 5);
+  const monthValues = mapBarsByPosition(values, barGroups, monthPositions, imgWidth);
+  renderExtractedGrid(monthValues);
+
+  // キャンバスのバーラベルも更新
+  const canvas = document.getElementById('chartCanvas');
+  if (canvas.style.display !== 'none') {
+    const ctx = canvas.getContext('2d');
+    // ラベル描画エリア（バー下端付近）をクリアして再描画
+    ctx.clearRect(0, chartBottom - 30, canvas.width, 35);
+    drawBarLabels(ctx, barGroups, values, chartBottom);
+  }
+  updateChartStatus(values, monthPositions, monthValues);
+}
+
+function updateChartStatus(values, monthPositions, monthValues) {
   const detected = values.filter(v => v > 0).length;
+  if (detected === 0) {
+    document.getElementById('ocrStatus').textContent = '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
+    return;
+  }
   const detectedMonths = monthPositions.filter(p =>
     monthValues[p.month - 1] !== '' && monthValues[p.month - 1] !== 0
   );
@@ -414,11 +446,9 @@ async function runChartAnalysis(dataUrl) {
     ? `（${detectedMonths.map(p => p.month + '月').join('・')}）`
     : monthPositions.length > 0
       ? `（ラベル検出: ${monthPositions.map(p => p.month + '月').join('・')}）`
-      : '（月ラベル未検出：1月から順に割り当て）';
-  ocrStatus.textContent = detected > 0
-    ? `✅ ${detected}本の棒を検出 ${monthInfo}。値を確認して「適用」ボタンを押してください。`
-    : '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
-  ocrExtracted.style.display = 'block';
+      : '（月ラベル未検出）';
+  document.getElementById('ocrStatus').textContent =
+    `✅ ${detected}本の棒を検出 ${monthInfo}。値を確認して「適用」ボタンを押してください。`;
 }
 
 // X軸ラベル（2025/05 等）を単語レベルOCRでx座標付きに検出する
@@ -617,16 +647,16 @@ function detectBarsFromImage(imageData, width, height, yAxisMax, colorMode) {
   }
 
   const chartHeight = Math.max(chartBottom - chartTopPx, 1);
-  const values = barGroups.map(bar => {
+  const fractions = barGroups.map(bar => {
     let top = chartBottom;
     for (let x = bar.start; x <= bar.end; x++) {
       if (colHasBar[x] && colTop[x] < top) top = colTop[x];
     }
-    const fraction = Math.max(0, Math.min(1, (chartBottom - top) / chartHeight));
-    return Math.round(fraction * yAxisMax / 5) * 5;
+    return Math.max(0, Math.min(1, (chartBottom - top) / chartHeight));
   });
+  const values = fractions.map(f => Math.round(f * yAxisMax / 5) * 5);
 
-  return { values: values.slice(0, 12), barGroups: barGroups.slice(0, 12), chartBottom, chartTopPx };
+  return { values: values.slice(0, 12), fractions: fractions.slice(0, 12), barGroups: barGroups.slice(0, 12), chartBottom, chartTopPx };
 }
 
 function highlightDetectedBars(ctx, imageData, width, height, colorMode) {
@@ -808,8 +838,13 @@ function deleteProject() {
   alert(`「${name}」を削除しました。`);
 }
 
-// ページ読み込み時に保存済み案件一覧を復元 + ドロップゾーン初期化
-window.addEventListener('DOMContentLoaded', () => { refreshProjectSelect(''); initDropZone(); });
+// ページ読み込み時に保存済み案件一覧を復元 + ドロップゾーン初期化 + 再計算リスナー
+window.addEventListener('DOMContentLoaded', () => {
+  refreshProjectSelect('');
+  initDropZone();
+  document.getElementById('yAxisMax').addEventListener('input',  recalcChartGrid);
+  document.getElementById('firstBarMonth').addEventListener('change', recalcChartGrid);
+});
 
 // ---- シミュレーション ----
 
