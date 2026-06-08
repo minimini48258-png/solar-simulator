@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>太陽光シミュレーター</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; text-align: center; padding-top: 20px; }
+    input, select, button { margin: 5px; padding: 5px; font-size: 1em; }
+    canvas {
+      width: 100% !important;
+      max-width: 1200px;
+      height: auto !important;
+      margin: 30px auto;
+      display: block;
+    }
+    .chart-title, .table-title {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-top: 40px;
+      margin-bottom: 10px;
+      text-align: center;
+      display: none;
+    }
+    table {
+      border-collapse: collapse;
+      margin: 20px auto;
+      width: 95%;
+      max-width: 100%;
+      overflow-x: auto;
+      display: block;
+    }
+    th, td { border: 1px solid #999; padding: 8px; text-align: center; }
+    th { background-color: #eee; }
+    #monthlyInputs { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 100%; overflow-x: auto; }
+    .month-group { display: flex; flex-direction: column; align-items: center; width: 60px; }
+    .month-label { font-size: 12px; margin-bottom: 4px; }
+    .month-group input[type="number"] { width: 55px; padding: 3px; text-align: center; }
+    .slider-input-pair { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    .slider-input-pair input[type="range"] { width: 200px; }
+    .slider-input-pair input[type="number"] { width: 80px; }
+    #resultTable { margin-top: 30px; overflow-x: auto; display: flex; justify-content: center; }
+    #resultTable table { margin: auto; width: auto; border-collapse: collapse; }
+    #resultTable th, #resultTable td { padding: 6px 10px; border: 1px solid #ccc; }
+    #co2Info { font-weight: bold; margin-top: 20px; }
+    #displayYearContainer { margin-top: 20px; }
+
+    /* 写真読み込みパネル */
+    #photoSection {
+      border: 2px dashed #aaa;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 16px auto;
+      max-width: 680px;
+      background: #fafafa;
+    }
+    #photoSection h3 { margin: 0 0 10px; font-size: 1em; }
+    #photoPreviewImg { max-width: 320px; max-height: 320px; margin: 10px auto; display: block; border: 1px solid #ccc; border-radius: 4px; }
+    #ocrStatus { margin: 8px 0; color: #555; font-size: 0.9em; }
+    #extractedGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 10px 0; }
+    .ext-month { display: flex; flex-direction: column; align-items: center; width: 60px; }
+    .ext-month span { font-size: 12px; margin-bottom: 4px; }
+    .ext-month input { width: 55px; padding: 3px; text-align: center; font-size: 1em; }
+    #ocrRawText { text-align: left; font-size: 11px; background: #f0f0f0; padding: 10px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; border-radius: 4px; }
+    #dropZone {
+      border: 2px dashed #aaa;
+      border-radius: 8px;
+      padding: 24px 16px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+      font-size: 0.9em;
+      color: #666;
+    }
+    #dropZone.dragover { background: #e8f4ff; border-color: #2196F3; color: #2196F3; }
+    #dropZone input[type="file"] { display: none; }
+
+    /* 案件管理パネル */
+    #projectPanel {
+      background: #f5f5f5;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin-bottom: 24px;
+      display: inline-block;
+      text-align: left;
+    }
+    #projectPanel h3 { margin: 0 0 10px; font-size: 1em; text-align: center; }
+    .project-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 6px; }
+    .project-row label { font-size: 0.9em; white-space: nowrap; }
+    #projectName { width: 180px; }
+    #projectSelect { width: 180px; }
+    button.btn-save   { background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button.btn-load   { background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button.btn-delete { background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button.btn-save:hover   { background: #388E3C; }
+    button.btn-load:hover   { background: #1565C0; }
+    button.btn-delete:hover { background: #b71c1c; }
+
+    @media screen and (max-width: 600px) {
+      .slider-input-pair { flex-direction: column; align-items: flex-start; }
+      input[type="number"], select { width: 100%; }
+      .month-group { width: 45px; }
+      .month-group input[type="number"] { width: 40px; }
+    }
+    @media (max-width: 600px) {
+      canvas { font-size: 10px; width: 100%; height: 100vh; }
+    }
+  </style>
+</head>
+<body>
+<h2>太陽光シミュレーター</h2>
+
+<!-- 案件管理パネル -->
+<div id="projectPanel">
+  <h3>案件管理</h3>
+  <div class="project-row">
+    <label>案件名：</label>
+    <input type="text" id="projectName" placeholder="例：山田邸">
+    <button class="btn-save" onclick="saveProject()">保存</button>
+  </div>
+  <div class="project-row">
+    <label>保存済み案件：</label>
+    <select id="projectSelect"><option value="">― 選択してください ―</option></select>
+    <button class="btn-load" onclick="loadProject()">読み込み</button>
+    <button class="btn-delete" onclick="deleteProject()">削除</button>
+  </div>
+</div>
+
+<div class="slider-input-pair">
+  <label>設置容量 (kW):
+    <input type="range" id="capacity" value="6.15" min="1" max="15" step="0.01" oninput="document.getElementById('capacityVal').value = this.value">
+    <input type="number" id="capacityVal" value="6.15" step="0.01" oninput="document.getElementById('capacity').value = this.value">
+  </label>
+</div>
+<div class="slider-input-pair">
+  <label>昼間の使用割合 (0~1):
+    <input type="range" id="dayRatio" value="0.5" step="0.01" min="0" max="1" oninput="document.getElementById('dayRatioVal').value = this.value">
+    <input type="number" id="dayRatioVal" value="0.5" step="0.01" min="0" max="1" oninput="document.getElementById('dayRatio').value = this.value">
+  </label>
+</div>
+<div class="slider-input-pair">
+  <label>kWあたり年間予測発電量 (kWh):
+    <input type="range" id="perKwGen" value="1181" min="500" max="1500" step="1" oninput="document.getElementById('perKwGenVal').value = this.value">
+    <input type="number" id="perKwGenVal" value="1181" step="1" min="500" max="1500" oninput="document.getElementById('perKwGen').value = this.value">
+  </label>
+</div>
+<div class="slider-input-pair">
+  <label>相乗りくん単価 (1〜10年目) [円/kWh]:
+    <input type="range" id="ainoriRate" value="21" min="15" max="30" step="0.5" oninput="document.getElementById('ainoriRateVal').value = this.value">
+    <input type="number" id="ainoriRateVal" value="21" step="0.1" min="10" max="30" oninput="document.getElementById('ainoriRate').value = this.value">
+  </label>
+</div>
+
+<label>パネルの向き:
+  <select id="panelDirection">
+    <option value="1.00">南</option>
+    <option value="0.96">南東</option>
+    <option value="0.96">南西</option>
+    <option value="0.83">東</option>
+    <option value="0.83">西</option>
+  </select>
+</label>
+
+<p>年間発電量はこちらからご確認ください。</p>
+<a href="https://www.sonicweb-asp.jp/nagano_solar_map/">https://www.sonicweb-asp.jp/nagano_solar_map/</a>
+
+<h3>月別使用量（kWh）</h3>
+<div id="monthlyInputs">
+  <div class="month-group"><div class="month-label">1月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">2月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">3月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">4月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">5月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">6月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">7月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">8月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">9月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">10月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">11月</div><input type="number" value="0" min="0"></div>
+  <div class="month-group"><div class="month-label">12月</div><input type="number" value="0" min="0"></div>
+</div>
+
+<!-- 写真読み込みパネル -->
+<div id="photoSection">
+  <h3>写真から月別使用量を読み込む</h3>
+
+  <!-- モード切替 -->
+  <div style="margin-bottom:10px;">
+    <label style="margin-right:16px; cursor:pointer;">
+      <input type="radio" name="ocrMode" value="text" checked onchange="updateOcrMode()"> 文字・数値OCR
+    </label>
+    <label style="cursor:pointer;">
+      <input type="radio" name="ocrMode" value="chart" onchange="updateOcrMode()"> 棒グラフ解析
+    </label>
+  </div>
+
+  <!-- 棒グラフ解析オプション -->
+  <div id="chartModeOptions" style="display:none; margin-bottom:10px; font-size:0.9em; color:#444;">
+    <label>Y軸の最大値：<input type="number" id="yAxisMax" value="1200" style="width:80px; margin:0 4px;">kWh</label>
+    <label style="margin-left:16px;">棒の色：
+      <select id="barColorMode">
+        <option value="yellow">黄色系（カテエネ等）</option>
+        <option value="blue">青色系</option>
+        <option value="green">緑色系</option>
+        <option value="auto">自動検出</option>
+      </select>
+    </label>
+  </div>
+
+  <p id="photoHint" style="font-size:0.85em; color:#666; margin:0 0 10px;">
+    電気代明細の写真をドロップするか選択するとOCRで使用量を読み取ります。<br>初回はデータダウンロード（約4MB）に時間がかかります。
+  </p>
+  <div id="dropZone" onclick="document.getElementById('billPhoto').click()">
+    <input type="file" id="billPhoto" accept="image/*" onchange="onPhotoSelected(this.files[0])">
+    📷 ここに写真をドロップ、またはクリックして選択
+  </div>
+  <div id="photoPreviewArea" style="display:none; margin-top:12px;">
+    <img id="photoPreviewImg" alt="明細プレビュー" style="max-width:100%;">
+    <canvas id="chartCanvas" style="display:none; max-width:100%; border:1px solid #ccc; border-radius:4px;"></canvas>
+    <div id="ocrStatus"></div>
+    <div id="ocrExtracted" style="display:none;">
+      <p style="font-size:0.85em; color:#555; margin:4px 0 8px;">読み取った値を確認・修正してから「適用」してください。</p>
+      <div id="extractedGrid"></div>
+      <button class="btn-save" style="margin-top:8px;" onclick="applyExtracted()">月別使用量に適用</button>
+      <details style="margin-top:12px; text-align:left;" id="ocrRawDetails">
+        <summary style="cursor:pointer; font-size:0.85em; color:#666;">OCR生テキストを確認する</summary>
+        <pre id="ocrRawText"></pre>
+      </details>
+    </div>
+  </div>
+</div>
+
+<br>
+<button onclick="simulate()">シミュレーション開始</button>
+<button onclick="exportCSV()">CSVエクスポート</button>
+<button onclick="exportPDF()">PDFエクスポート</button>
+<br>
+<div id="displayYearContainer">
+  <label for="displayYear">表示する年：</label>
+  <select id="displayYear"></select>
+</div>
+
+<div id="savingsText" style="margin-top: 20px; font-weight: bold;"></div>
+
+<div class="table-title" id="monthlyTableTitle">月別シミュレーション結果</div>
+<div id="resultTable"></div>
+<div id="co2Info"></div>
+
+<div class="chart-title" id="monthlyChartTitle">月別支払い推移グラフ</div>
+<canvas id="monthlyChart"></canvas>
+
+<div class="chart-title" id="yearlyChartTitle">年別支払い推移グラフ</div>
+<canvas id="yearlyChart"></canvas>
+
+<div class="chart-title" id="cumulativeChartTitle">累積支払いグラフ</div>
+<canvas id="cumulativeChart"></canvas>
+
+<script>
+const months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+const solarFactors = [0.06, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063];
+const FIT_YEARLY = [...Array(30)].map((_, i) => i < 4 ? 24 : (i < 10 ? 8.5 : 7));
+const AINORI_YEARLY = [...Array(30)].map((_, i) => i < 10 ? 21 : (i < 12 ? 7 : 0));
+const BASIC_CHARGE = 1926.84;
+const TIER1_RATE = 21.33;
+const TIER2_RATE = 25.80;
+const TIER3_RATE = 27.60;
+const SURCHARGE = 1.4;
+const STORAGE_KEY = 'solar-simulator-projects';
+
+let yearlyChart, monthlyChart, cumulativeChart;
+let monthlyYearlyData = [];
+let yearlyData = [];
+
+// ---- 写真OCR ----
+
+function initDropZone() {
+  const zone = document.getElementById('dropZone');
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) onPhotoSelected(file);
+  });
+}
+
+function updateOcrMode() {
+  const mode = document.querySelector('input[name="ocrMode"]:checked').value;
+  document.getElementById('chartModeOptions').style.display = mode === 'chart' ? 'block' : 'none';
+  document.getElementById('photoHint').textContent = mode === 'chart'
+    ? 'グラフのスクリーンショットをドロップまたは選択してください。'
+    : '電気代明細の写真をドロップするか選択するとOCRで使用量を読み取ります。初回はデータダウンロード（約4MB）に時間がかかります。';
+  document.getElementById('ocrRawDetails').style.display = mode === 'chart' ? 'none' : '';
+}
+
+async function onPhotoSelected(file) {
+  if (!file) return;
+
+  const previewArea  = document.getElementById('photoPreviewArea');
+  const previewImg   = document.getElementById('photoPreviewImg');
+  const chartCanvas  = document.getElementById('chartCanvas');
+  const ocrStatus    = document.getElementById('ocrStatus');
+  const ocrExtracted = document.getElementById('ocrExtracted');
+  const mode = document.querySelector('input[name="ocrMode"]:checked').value;
+
+  previewArea.style.display  = 'block';
+  ocrExtracted.style.display = 'none';
+  ocrStatus.textContent      = '';
+  previewImg.style.display   = mode === 'text' ? 'block' : 'none';
+  chartCanvas.style.display  = mode === 'chart' ? 'block' : 'none';
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    if (mode === 'chart') {
+      await runChartAnalysis(e.target.result);
+    } else {
+      previewImg.src = e.target.result;
+      await runTextOCR(e.target.result);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ---------- 文字OCR ----------
+async function runTextOCR(dataUrl) {
+  const ocrStatus    = document.getElementById('ocrStatus');
+  const ocrExtracted = document.getElementById('ocrExtracted');
+  ocrStatus.textContent = '⏳ OCR処理中…（初回はダウンロードに時間がかかります）';
+  try {
+    const result = await Tesseract.recognize(dataUrl, 'jpn+eng', {
+      logger: m => {
+        if (m.status === 'recognizing text')
+          ocrStatus.textContent = `⏳ OCR処理中… ${Math.round(m.progress * 100)}%`;
+        else if (m.status)
+          ocrStatus.textContent = `⏳ ${m.status}…`;
+      }
+    });
+    const text = result.data.text;
+    document.getElementById('ocrRawText').textContent = text;
+    renderExtractedGrid(parseUsageFromOCR(text));
+    ocrStatus.textContent = '✅ OCR完了。値を確認して「適用」ボタンを押してください。';
+    ocrExtracted.style.display = 'block';
+  } catch (err) {
+    ocrStatus.textContent = `❌ エラー: ${err?.message || String(err) || '不明なエラー'}`;
+    console.error('OCRエラー:', err);
+  }
+}
+
+// ---------- 棒グラフ解析 ----------
+async function runChartAnalysis(dataUrl) {
+  const ocrStatus    = document.getElementById('ocrStatus');
+  const ocrExtracted = document.getElementById('ocrExtracted');
+  const canvas       = document.getElementById('chartCanvas');
+  const yAxisMax     = parseInt(document.getElementById('yAxisMax').value) || 1200;
+  const colorMode    = document.getElementById('barColorMode').value;
+  ocrStatus.textContent = '⏳ グラフを解析中…';
+
+  const img = new Image();
+  img.onload = () => {
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const { values, barGroups, chartBottom } =
+      detectBarsFromImage(imageData, img.width, img.height, yAxisMax, colorMode);
+
+    highlightDetectedBars(ctx, imageData, img.width, img.height, colorMode);
+    drawBarLabels(ctx, barGroups, values, chartBottom);
+
+    renderExtractedGrid(values);
+    const detected = values.filter(v => v > 0).length;
+    ocrStatus.textContent = detected > 0
+      ? `✅ ${detected}本の棒を検出しました。値を確認して「適用」ボタンを押してください。`
+      : '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
+    ocrExtracted.style.display = 'block';
+  };
+  img.onerror = () => { ocrStatus.textContent = '❌ 画像の読み込みに失敗しました。'; };
+  img.src = dataUrl;
+}
+
+function isBarPixel(r, g, b, mode) {
+  switch (mode) {
+    case 'yellow': return r > 170 && g > 130 && b < 70 && r > g * 0.75 && g > b * 2.5;
+    case 'blue':   return b > 150 && r < 130 && g < 160 && b > r * 1.4;
+    case 'green':  return g > 150 && r < 140 && b < 140 && g > r * 1.3 && g > b * 1.3;
+    case 'auto': {
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      return max > 100 && (max - min) > 60 && max < 240;
+    }
+    default: return false;
+  }
+}
+
+function detectBarsFromImage(imageData, width, height, yAxisMax, colorMode) {
+  const data = imageData.data;
+  const colTop    = new Array(width).fill(height);
+  const colBottom = new Array(width).fill(-1);
+  const colHasBar = new Array(width).fill(false);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (isBarPixel(data[i], data[i+1], data[i+2], colorMode)) {
+        colHasBar[x] = true;
+        if (y < colTop[x])    colTop[x]    = y;
+        if (y > colBottom[x]) colBottom[x] = y;
+      }
+    }
+  }
+
+  // チャート下端：棒の底のy座標（75パーセンタイル）
+  const bottoms = colBottom.filter((v, i) => colHasBar[i] && v > 0);
+  bottoms.sort((a, b) => a - b);
+  const chartBottom = bottoms.length
+    ? bottoms[Math.floor(bottoms.length * 0.75)]
+    : Math.round(height * 0.85);
+
+  // チャート上端：最も高い棒の上端（3パーセンタイル）
+  const tops = colTop.filter((v, i) => colHasBar[i]);
+  tops.sort((a, b) => a - b);
+  const chartTopPx = tops.length
+    ? tops[Math.floor(tops.length * 0.03)]
+    : Math.round(height * 0.1);
+
+  // 連続する黄色列を棒としてグループ化
+  const MIN_BAR_WIDTH = 4;
+  const MIN_GAP       = 3;
+  const barGroups = [];
+  let inBar = false, barStart = 0, gapCount = 0;
+
+  for (let x = 0; x <= width; x++) {
+    if (x < width && colHasBar[x]) {
+      if (!inBar) { inBar = true; barStart = x; gapCount = 0; }
+      else gapCount = 0;
+    } else {
+      if (inBar) {
+        gapCount++;
+        if (gapCount >= MIN_GAP) {
+          inBar = false;
+          const barEnd = x - gapCount;
+          if (barEnd - barStart >= MIN_BAR_WIDTH) barGroups.push({ start: barStart, end: barEnd });
+        }
+      }
+    }
+  }
+
+  const chartHeight = Math.max(chartBottom - chartTopPx, 1);
+  const values = barGroups.map(bar => {
+    let top = chartBottom;
+    for (let x = bar.start; x <= bar.end; x++) {
+      if (colHasBar[x] && colTop[x] < top) top = colTop[x];
+    }
+    const fraction = Math.max(0, Math.min(1, (chartBottom - top) / chartHeight));
+    return Math.round(fraction * yAxisMax / 5) * 5;
+  });
+
+  return { values: values.slice(0, 12), barGroups: barGroups.slice(0, 12), chartBottom, chartTopPx };
+}
+
+function highlightDetectedBars(ctx, imageData, width, height, colorMode) {
+  const data = imageData.data;
+  ctx.fillStyle = 'rgba(0, 200, 80, 0.35)';
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (isBarPixel(data[i], data[i+1], data[i+2], colorMode)) {
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+}
+
+function drawBarLabels(ctx, barGroups, values, chartBottom) {
+  ctx.font = 'bold 13px Arial';
+  ctx.textAlign = 'center';
+  barGroups.forEach((bar, i) => {
+    if (!values[i]) return;
+    const cx = Math.round((bar.start + bar.end) / 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(cx - 24, chartBottom - 24, 48, 18);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(values[i], cx, chartBottom - 9);
+  });
+}
+
+function parseUsageFromOCR(text) {
+  const results = [];
+
+  // kWh付きの数値を優先的に抽出
+  const kwhRe = /(\d{1,4})\s*k[Ww][Hh]/gi;
+  let m;
+  while ((m = kwhRe.exec(text)) !== null) {
+    const v = parseInt(m[1]);
+    if (v >= 10 && v <= 5000) results.push(v);
+  }
+
+  // kWhが見つからない場合、家庭使用量らしい数値を抽出（50〜3000 kWh）
+  if (results.length < 3) {
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const nums = [...line.matchAll(/\b(\d{2,4})\b/g)];
+      for (const n of nums) {
+        const v = parseInt(n[1]);
+        if (v >= 50 && v <= 3000) results.push(v);
+      }
+    }
+  }
+
+  return [...new Set(results)]; // 重複除去
+}
+
+function renderExtractedGrid(values) {
+  const grid = document.getElementById('extractedGrid');
+  // 12件ちょうどなら順に割り当て、それ以外は空欄
+  const assigned = values.length === 12 ? values : new Array(12).fill('');
+
+  let html = '';
+  for (let i = 0; i < 12; i++) {
+    html += `
+      <div class="ext-month">
+        <span>${i + 1}月</span>
+        <input type="number" id="ext_${i}" value="${assigned[i]}" min="0" placeholder="0">
+      </div>`;
+  }
+  grid.innerHTML = html;
+
+  // 12件以外のときは検出値リストを補足表示
+  if (values.length !== 12 && values.length > 0) {
+    grid.insertAdjacentHTML('beforeend',
+      `<p style="width:100%; font-size:0.82em; color:#888; margin-top:6px;">
+        検出された数値: ${values.join(', ')}<br>
+        各月の欄に手動で入力してください。
+      </p>`);
+  } else if (values.length === 0) {
+    grid.insertAdjacentHTML('beforeend',
+      `<p style="width:100%; font-size:0.82em; color:#c00;">
+        数値を検出できませんでした。手動で入力してください。
+      </p>`);
+  }
+}
+
+function applyExtracted() {
+  const usageInputs = document.querySelectorAll('#monthlyInputs input');
+  let count = 0;
+  for (let i = 0; i < 12; i++) {
+    const val = document.getElementById(`ext_${i}`).value;
+    if (val !== '' && usageInputs[i]) {
+      usageInputs[i].value = val;
+      count++;
+    }
+  }
+  alert(count > 0 ? `${count}ヶ月分の使用量を適用しました。` : '適用する値がありません。');
+}
+
+// ---- 案件管理 ----
+
+function getProjects() {
+  return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+}
+
+function setProjects(projects) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+}
+
+function getCurrentInputs() {
+  const usageInputs = document.querySelectorAll('#monthlyInputs input');
+  return {
+    capacity:      document.getElementById('capacity').value,
+    dayRatio:      document.getElementById('dayRatio').value,
+    perKwGen:      document.getElementById('perKwGen').value,
+    ainoriRate:    document.getElementById('ainoriRate').value,
+    panelDirection: document.getElementById('panelDirection').value,
+    usages: Array.from(usageInputs).map(i => i.value)
+  };
+}
+
+function applyInputs(data) {
+  document.getElementById('capacity').value    = data.capacity;
+  document.getElementById('capacityVal').value = data.capacity;
+  document.getElementById('dayRatio').value    = data.dayRatio;
+  document.getElementById('dayRatioVal').value = data.dayRatio;
+  document.getElementById('perKwGen').value    = data.perKwGen;
+  document.getElementById('perKwGenVal').value = data.perKwGen;
+  document.getElementById('ainoriRate').value    = data.ainoriRate;
+  document.getElementById('ainoriRateVal').value = data.ainoriRate;
+  document.getElementById('panelDirection').value = data.panelDirection;
+  const usageInputs = document.querySelectorAll('#monthlyInputs input');
+  data.usages.forEach((v, i) => { if (usageInputs[i]) usageInputs[i].value = v; });
+}
+
+function refreshProjectSelect(selectedName) {
+  const projects = getProjects();
+  const select = document.getElementById('projectSelect');
+  select.innerHTML = '<option value="">― 選択してください ―</option>';
+  Object.keys(projects).sort().forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.text  = name;
+    if (name === selectedName) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function saveProject() {
+  const name = document.getElementById('projectName').value.trim();
+  if (!name) { alert('案件名を入力してください。'); return; }
+  const projects = getProjects();
+  if (projects[name] && !confirm(`「${name}」はすでに保存されています。上書きしますか？`)) return;
+  projects[name] = getCurrentInputs();
+  setProjects(projects);
+  refreshProjectSelect(name);
+  alert(`「${name}」を保存しました。`);
+}
+
+function loadProject() {
+  const name = document.getElementById('projectSelect').value;
+  if (!name) { alert('読み込む案件を選択してください。'); return; }
+  const projects = getProjects();
+  if (!projects[name]) { alert('データが見つかりません。'); return; }
+  applyInputs(projects[name]);
+  document.getElementById('projectName').value = name;
+  alert(`「${name}」を読み込みました。`);
+}
+
+function deleteProject() {
+  const name = document.getElementById('projectSelect').value;
+  if (!name) { alert('削除する案件を選択してください。'); return; }
+  if (!confirm(`「${name}」を削除しますか？`)) return;
+  const projects = getProjects();
+  delete projects[name];
+  setProjects(projects);
+  refreshProjectSelect('');
+  alert(`「${name}」を削除しました。`);
+}
+
+// ページ読み込み時に保存済み案件一覧を復元 + ドロップゾーン初期化
+window.addEventListener('DOMContentLoaded', () => { refreshProjectSelect(''); initDropZone(); });
+
+// ---- シミュレーション ----
+
+function showSavings(before, after, year = 1) {
+  const diff = before - after;
+  const text = diff > 0
+    ? `${year}年目は相乗りくんを使うと約 ${Math.round(diff).toLocaleString()} 円のお得です`
+    : `${year}年目は相乗りくんを使うと約 ${Math.abs(Math.round(diff)).toLocaleString()} 円の「負担増」です`;
+  document.getElementById("savingsText").innerHTML = `<h3>お得度シミュレーション結果</h3><p>${text}</p>`;
+}
+
+function addCopyButtons() {
+  ['monthlyChart', 'yearlyChart', 'cumulativeChart'].forEach(id => {
+    const existing = document.getElementById(`btn-copy-${id}`);
+    if (existing) existing.remove();
+    const canvas = document.getElementById(id);
+    const btn = document.createElement('button');
+    btn.id = `btn-copy-${id}`;
+    btn.textContent = `グラフをコピー`;
+    btn.onclick = () => {
+      canvas.toBlob(blob => {
+        const item = new ClipboardItem({ 'image/png': blob });
+        navigator.clipboard.write([item]);
+      });
+    };
+    canvas.parentNode.insertBefore(btn, canvas.nextSibling);
+  });
+}
+
+function simulate() {
+  const cap = parseFloat(document.getElementById("capacity").value);
+  const ratio = parseFloat(document.getElementById("dayRatio").value);
+  const perKwGen = parseFloat(document.getElementById("perKwGen").value);
+  const usageInputs = document.querySelectorAll('#monthlyInputs input');
+  const usages = Array.from(usageInputs).map(i => parseFloat(i.value) || 0);
+  const panelDirection = parseFloat(document.getElementById("panelDirection").value);
+
+  monthlyYearlyData = [];
+  yearlyData = [];
+  const cumulative = { 累積合計: [], 累積今までの支払い: [] };
+  let accumTotal = 0, accumBefore = 0;
+
+  for (let y = 1; y <= 30; y++) {
+    const fitRate = FIT_YEARLY[y - 1];
+    const ainoriRate = AINORI_YEARLY[y - 1];
+    const monthlyResult = {
+      見込み発電量: [], 使用量: usages, 売電量: [], 購入量: [],
+      相乗りくん支払額: [], 中電支払額: [], 売電収入: [], 合計: [], 今までの支払い: []
+    };
+    let totalYear = 0, beforeYear = 0;
+
+    for (let i = 0; i < 12; i++) {
+      const gen = cap * perKwGen * solarFactors[i] * panelDirection;
+      const use = usages[i];
+      const dayUse = use * ratio;
+      const nightUse = use * (1 - ratio);
+      const surplus = Math.max(gen - dayUse, 0);
+      const purchase = gen > dayUse ? nightUse : use - gen;
+      const ainori = cap * 1350 / 12 * ainoriRate;
+      const chuden = calculateChudenCharge(purchase);
+      const sell = surplus * fitRate;
+      const total = ainori + chuden - sell;
+      const beforeCost = calculateChudenCharge(use);
+
+      monthlyResult.見込み発電量.push(gen);
+      monthlyResult.売電量.push(surplus);
+      monthlyResult.購入量.push(purchase);
+      monthlyResult.相乗りくん支払額.push(ainori);
+      monthlyResult.中電支払額.push(chuden);
+      monthlyResult.売電収入.push(sell);
+      monthlyResult.合計.push(total);
+      monthlyResult.今までの支払い.push(beforeCost);
+
+      totalYear += total;
+      beforeYear += beforeCost;
+    }
+
+    monthlyYearlyData.push(monthlyResult);
+    accumTotal += totalYear;
+    accumBefore += beforeYear;
+    yearlyData.push({
+      年: y, 合計: totalYear, 今までの支払い: beforeYear,
+      相乗りくん支払額: monthlyResult.相乗りくん支払額.reduce((a, b) => a + b, 0),
+      中電支払額: monthlyResult.中電支払額.reduce((a, b) => a + b, 0),
+      売電収入: monthlyResult.売電収入.reduce((a, b) => a + b, 0)
+    });
+    cumulative.累積合計.push(accumTotal);
+    cumulative.累積今までの支払い.push(accumBefore);
+  }
+
+  populateYearSelector();
+  drawYearlyChart(yearlyData);
+  drawCumulativeChart(cumulative);
+  addCopyButtons();
+}
+
+function displayMonthlyTable(data) {
+  const rows = Object.keys(data).map(key => {
+    const values = data[key].map(v => Math.round(v));
+    return `<tr><td>${key}</td>${values.map(v => `<td>${v.toLocaleString()}</td>`).join('')}</tr>`;
+  }).join('');
+  const table = `
+    <table>
+      <thead><tr><th>項目</th>${months.map(m => `<th>${m}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+  document.getElementById("resultTable").innerHTML = table;
+}
+
+function displayCO2Reduction(totalGenKWh) {
+  const co2Factor = 0.00035;
+  const reduction = totalGenKWh * co2Factor;
+  document.getElementById("co2Info").innerText = `年間CO₂削減量の見込み: ${reduction.toFixed(2)} トン-CO₂`;
+}
+
+function calculateChudenCharge(kWh) {
+  let cost = 0;
+  if (kWh <= 120) cost = kWh * TIER1_RATE;
+  else if (kWh <= 300) cost = 120 * TIER1_RATE + (kWh - 120) * TIER2_RATE;
+  else cost = 120 * TIER1_RATE + 180 * TIER2_RATE + (kWh - 300) * TIER3_RATE;
+  return cost + BASIC_CHARGE + (kWh * SURCHARGE);
+}
+
+function exportCSV() {
+  const table = document.querySelector("#resultTable table");
+  if (!table) return;
+  let csv = "";
+  table.querySelectorAll("tr").forEach(row => {
+    const line = Array.from(row.querySelectorAll("th, td")).map(td => `"${td.innerText}"`).join(",");
+    csv += line + "\n";
+  });
+  const blob = new Blob(["﻿" + csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'solar_simulation.csv';
+  link.click();
+}
+
+function exportPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.text("太陽光シミュレーション結果", 10, 10);
+  let y = 20;
+  const table = document.querySelector("#resultTable table");
+  if (!table) return;
+  table.querySelectorAll("tr").forEach(row => {
+    const line = Array.from(row.querySelectorAll("th, td")).map(td => td.innerText).join("  ");
+    doc.text(line, 10, y);
+    y += 7;
+  });
+  doc.save("solar_simulation.pdf");
+}
+
+function populateYearSelector() {
+  const select = document.getElementById("displayYear");
+  select.innerHTML = "";
+  for (let y = 1; y <= monthlyYearlyData.length; y++) {
+    const option = document.createElement("option");
+    option.value = y;
+    option.text = `${y}年目`;
+    select.appendChild(option);
+  }
+  select.value = 1;
+  select.onchange = () => {
+    const selectedYear = parseInt(select.value);
+    drawMonthlyChart(selectedYear);
+    displayMonthlyTable(monthlyYearlyData[selectedYear - 1]);
+    const totalGen = monthlyYearlyData[selectedYear - 1].見込み発電量.reduce((a, b) => a + b, 0);
+    displayCO2Reduction(totalGen);
+    document.getElementById("monthlyTableTitle").innerText = `${selectedYear}年目の月別シミュレーション結果`;
+    showSavings(yearlyData[selectedYear - 1].今までの支払い, yearlyData[selectedYear - 1].合計, selectedYear);
+  };
+
+  drawMonthlyChart(1);
+  displayMonthlyTable(monthlyYearlyData[0]);
+  const totalGen = monthlyYearlyData[0].見込み発電量.reduce((a, b) => a + b, 0);
+  displayCO2Reduction(totalGen);
+  document.getElementById("monthlyTableTitle").innerText = `1年目の月別シミュレーション結果`;
+
+  document.getElementById("monthlyTableTitle").style.display = "block";
+  document.getElementById("monthlyChartTitle").style.display = "block";
+  document.getElementById("yearlyChartTitle").style.display = "block";
+  document.getElementById("cumulativeChartTitle").style.display = "block";
+
+  showSavings(yearlyData[0].今までの支払い, yearlyData[0].合計, 1);
+}
+
+function getChartStyle() {
+  const isMobile = window.innerWidth <= 600;
+  return { pointRadius: isMobile ? 1 : 3, borderWidth: isMobile ? 1 : 2 };
+}
+
+function drawMonthlyChart(year) {
+  const data = monthlyYearlyData[year - 1];
+  const ctx = document.getElementById('monthlyChart').getContext('2d');
+  if (monthlyChart) monthlyChart.destroy();
+  const style = getChartStyle();
+  monthlyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [
+        { label: '合計', data: data.合計, borderColor: 'black', fill: true, ...style },
+        { label: '相乗りくん支払額', data: data.相乗りくん支払額, borderColor: 'blue', ...style },
+        { label: '中電支払額', data: data.中電支払額, borderColor: 'red', ...style },
+        { label: '売電収入', data: data.売電収入, borderColor: 'green', ...style },
+        { label: '今までの支払い', data: data.今までの支払い, borderColor: 'gray', borderDash: [5, 5], ...style }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true }, tooltip: { enabled: true } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+}
+
+function drawYearlyChart(data) {
+  const ctx = document.getElementById('yearlyChart').getContext('2d');
+  if (yearlyChart) yearlyChart.destroy();
+  const style = getChartStyle();
+  yearlyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(d => `${d.年}年目`),
+      datasets: [
+        { label: '年別合計', data: data.map(d => d.合計), borderColor: 'black', ...style },
+        { label: '今までの支払い', data: data.map(d => d.今までの支払い), borderColor: 'gray', borderDash: [5, 5], ...style },
+        { label: '相乗りくん支払額', data: data.map(d => d.相乗りくん支払額), borderColor: 'blue', ...style },
+        { label: '中電支払額', data: data.map(d => d.中電支払額), borderColor: 'red', ...style },
+        { label: '売電収入', data: data.map(d => d.売電収入), borderColor: 'green', ...style }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true }, tooltip: { enabled: true } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+}
+
+function drawCumulativeChart(data) {
+  const ctx = document.getElementById('cumulativeChart').getContext('2d');
+  if (cumulativeChart) cumulativeChart.destroy();
+  const style = getChartStyle();
+  cumulativeChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.累積合計.map((_, i) => `${i + 1}年目`),
+      datasets: [
+        { label: '累積合計', data: data.累積合計, borderColor: 'black', ...style },
+        { label: '累積今までの支払い', data: data.累積今までの支払い, borderColor: 'gray', borderDash: [5, 5], ...style }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true }, tooltip: { enabled: true } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+}
+</script>
+</body>
+</html>
