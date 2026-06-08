@@ -380,12 +380,12 @@ async function runChartAnalysis(dataUrl) {
   const { values, barGroups, chartBottom } =
     detectBarsFromImage(imageData, img.width, img.height, yAxisMax, colorMode);
 
-  // X軸ラベルからどの月かをOCRで読み取る
+  // X軸ラベルをx座標付きでOCR検出
   ocrStatus.textContent = '⏳ 月ラベルを読み取り中…';
-  const monthIndices = await detectMonthsFromXAxis(img, chartBottom);
+  const monthPositions = await detectMonthPositions(img);
 
-  // 棒の値を正しい月に割り当て
-  const monthValues = mapValuesToMonths(values, monthIndices);
+  // 棒のx座標と月ラベルのx座標を照合して割り当て
+  const monthValues = mapBarsByPosition(values, barGroups, monthPositions, img.width);
 
   // ハイライト＆ラベル描画
   highlightDetectedBars(ctx, imageData, img.width, img.height, colorMode);
@@ -394,31 +394,34 @@ async function runChartAnalysis(dataUrl) {
   renderExtractedGrid(monthValues);
 
   const detected = values.filter(v => v > 0).length;
-  const monthInfo = monthIndices && monthIndices.length > 0
-    ? `（${monthIndices[0]}月〜${monthIndices[monthIndices.length - 1]}月）`
-    : '（月ラベル未検出：1月から順に割り当て）';
+  const detectedMonths = monthPositions.filter(p =>
+    monthValues[p.month - 1] !== '' && monthValues[p.month - 1] !== 0
+  );
+  const monthInfo = detectedMonths.length > 0
+    ? `（${detectedMonths.map(p => p.month + '月').join('・')}）`
+    : monthPositions.length > 0
+      ? `（ラベル検出: ${monthPositions.map(p => p.month + '月').join('・')}）`
+      : '（月ラベル未検出：1月から順に割り当て）';
   ocrStatus.textContent = detected > 0
     ? `✅ ${detected}本の棒を検出 ${monthInfo}。値を確認して「適用」ボタンを押してください。`
     : '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
   ocrExtracted.style.display = 'block';
 }
 
-// X軸ラベル領域をOCRして月番号の配列を返す
-async function detectMonthsFromXAxis(img, chartBottom) {
-  // chartBottomより下（x軸ラベル領域）を切り出す
-  // Math.max で「棒の下端より下」を確実に取る
-  const cropY = Math.round(Math.max(chartBottom, img.height * 0.72));
-  const cropH = img.height - cropY;
-  if (cropH < 8) return null;
+// X軸ラベル（2025/05 等）を単語レベルOCRでx座標付きに検出する
+async function detectMonthPositions(img) {
+  // 下部28%を3倍拡大＋二値化してOCR
+  const scale  = 3;
+  const cropY  = Math.round(img.height * 0.72);
+  const cropH  = img.height - cropY;
 
-  // 2倍に拡大 → 二値化（白黒化）でOCR精度向上
-  const tmp = document.createElement('canvas');
-  tmp.width  = img.width * 2;
-  tmp.height = cropH * 2;
+  const tmp  = document.createElement('canvas');
+  tmp.width  = img.width * scale;
+  tmp.height = cropH  * scale;
   const tctx = tmp.getContext('2d');
   tctx.drawImage(img, 0, cropY, img.width, cropH, 0, 0, tmp.width, tmp.height);
 
-  // グレースケール→二値化（閾値160）
+  // 二値化（テキストを鮮明化）
   const idata = tctx.getImageData(0, 0, tmp.width, tmp.height);
   for (let i = 0; i < idata.data.length; i += 4) {
     const gray = 0.299 * idata.data[i] + 0.587 * idata.data[i+1] + 0.114 * idata.data[i+2];
@@ -427,62 +430,86 @@ async function detectMonthsFromXAxis(img, chartBottom) {
   }
   tctx.putImageData(idata, 0, 0);
 
-  try {
-    const { data: { text } } = await Tesseract.recognize(tmp.toDataURL(), 'eng', {
-      logger: m => {
-        if (m.status === 'recognizing text')
-          document.getElementById('ocrStatus').textContent =
-            `⏳ 月ラベル読み取り中… ${Math.round(m.progress * 100)}%`;
-      }
-    });
-    console.log('X軸OCR結果:', text);
-    const months = parseMonthsFromText(text);
+  const logger = m => {
+    if (m.status === 'recognizing text')
+      document.getElementById('ocrStatus').textContent =
+        `⏳ 月ラベル読み取り中… ${Math.round(m.progress * 100)}%`;
+  };
 
-    // 下部クロップで取れなかった場合は画像全体で再試行
-    if (months.length === 0) {
-      const { data: { text: fullText } } = await Tesseract.recognize(img.src || img, 'eng', {});
-      console.log('全体OCR結果:', fullText);
-      return parseMonthsFromText(fullText);
+  try {
+    const { data } = await Tesseract.recognize(tmp.toDataURL(), 'eng', { logger });
+    console.log('月ラベルOCR words:', data.words.map(w => `"${w.text}"`).join(' '));
+
+    const positions = extractMonthPositions(data.words, scale);
+
+    // 取れなかった場合は画像全体で再試行
+    if (positions.length === 0) {
+      const { data: d2 } = await Tesseract.recognize(tmp.toDataURL(), 'eng', {});
+      return extractMonthPositions(d2.words, scale);
     }
-    return months;
+    return positions;
   } catch (e) {
     console.error('月ラベルOCR失敗:', e);
-    return null;
+    return [];
   }
 }
 
-// OCRテキストから月番号（1〜12）の配列を抽出
-function parseMonthsFromText(text) {
-  const set = new Set();
+// words配列から {month, cx} を抽出（OCRの誤読・分割トークンに対応）
+function extractMonthPositions(words, scale) {
+  const positions = [];
+  for (let wi = 0; wi < words.length; wi++) {
+    const text = words[wi].text.trim().replace(/[Oo]/g, '0'); // O→0の誤読修正
 
-  // 「2025/05」「2025-05」など年月形式（OCRの誤読も考慮して年部分を緩く）
-  for (const m of text.matchAll(/2[O0][0-9][0-9][\/\-\s]?(\d{1,2})\b/g)) {
-    const v = parseInt(m[1]);
-    if (v >= 1 && v <= 12) set.add(v);
-  }
-  if (set.size > 0) return [...set].sort((a, b) => a - b);
+    // 「2025/05」が1トークンで来たケース
+    let m = text.match(/^2[0-9][0-9][0-9][\/\-](\d{1,2})$/);
+    if (m) {
+      const month = parseInt(m[1]);
+      if (month >= 1 && month <= 12) {
+        const cx = ((words[wi].bbox.x0 + words[wi].bbox.x1) / 2) / scale;
+        positions.push({ month, cx });
+        continue;
+      }
+    }
 
-  // 「/05」「/12」のスラッシュ+2桁
-  for (const m of text.matchAll(/[\/\-](\d{2})\b/g)) {
-    const v = parseInt(m[1]);
-    if (v >= 1 && v <= 12) set.add(v);
+    // 「2025」「/05」に分割されたケース
+    if (/^2[0-9]{3}$/.test(text) && wi + 1 < words.length) {
+      const next = words[wi + 1].text.trim().replace(/[Oo]/g, '0');
+      const m2 = next.match(/^[\/\-]?(\d{1,2})$/);
+      if (m2) {
+        const month = parseInt(m2[1]);
+        if (month >= 1 && month <= 12) {
+          const cx = ((words[wi].bbox.x0 + words[wi + 1].bbox.x1) / 2) / scale;
+          positions.push({ month, cx });
+          wi++;
+          continue;
+        }
+      }
+    }
   }
-  return [...set].sort((a, b) => a - b);
+  return positions.sort((a, b) => a.cx - b.cx);
 }
 
-// 棒の検出値を月番号に基づいて12要素配列にマッピング
-function mapValuesToMonths(barValues, monthIndices) {
+// 棒のx中心座標と月ラベルのx座標を照合してマッピング
+function mapBarsByPosition(barValues, barGroups, monthPositions, imgWidth) {
   const result = new Array(12).fill('');
-  if (!monthIndices || monthIndices.length === 0) {
-    // 月情報なし → 1月から順番に割り当て
+  if (monthPositions.length === 0) {
+    // フォールバック：1月から順に割り当て
     barValues.forEach((v, i) => { if (i < 12) result[i] = v; });
     return result;
   }
-  const n = Math.min(barValues.length, monthIndices.length);
-  for (let i = 0; i < n; i++) {
-    const mi = monthIndices[i] - 1;
-    if (mi >= 0 && mi < 12) result[mi] = barValues[i];
-  }
+  barGroups.forEach((bar, i) => {
+    if (i >= barValues.length || !barValues[i]) return;
+    const barCx = (bar.start + bar.end) / 2;
+    // 最も近い月ラベルを探す
+    let best = null, bestDist = Infinity;
+    for (const mp of monthPositions) {
+      const d = Math.abs(mp.cx - barCx);
+      if (d < bestDist) { bestDist = d; best = mp; }
+    }
+    if (best && bestDist < imgWidth * 0.12) {
+      result[best.month - 1] = barValues[i];
+    }
+  });
   return result;
 }
 
