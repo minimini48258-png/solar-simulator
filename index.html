@@ -357,31 +357,114 @@ async function runChartAnalysis(dataUrl) {
   const canvas       = document.getElementById('chartCanvas');
   const yAxisMax     = parseInt(document.getElementById('yAxisMax').value) || 1200;
   const colorMode    = document.getElementById('barColorMode').value;
+
   ocrStatus.textContent = '⏳ グラフを解析中…';
 
-  const img = new Image();
-  img.onload = () => {
-    canvas.width  = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
+  // 画像をPromiseでロード
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload  = () => resolve(i);
+    i.onerror = reject;
+    i.src = dataUrl;
+  }).catch(() => null);
 
-    const imageData = ctx.getImageData(0, 0, img.width, img.height);
-    const { values, barGroups, chartBottom } =
-      detectBarsFromImage(imageData, img.width, img.height, yAxisMax, colorMode);
+  if (!img) { ocrStatus.textContent = '❌ 画像の読み込みに失敗しました。'; return; }
 
-    highlightDetectedBars(ctx, imageData, img.width, img.height, colorMode);
-    drawBarLabels(ctx, barGroups, values, chartBottom);
+  canvas.width  = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
 
-    renderExtractedGrid(values);
-    const detected = values.filter(v => v > 0).length;
-    ocrStatus.textContent = detected > 0
-      ? `✅ ${detected}本の棒を検出しました。値を確認して「適用」ボタンを押してください。`
-      : '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
-    ocrExtracted.style.display = 'block';
-  };
-  img.onerror = () => { ocrStatus.textContent = '❌ 画像の読み込みに失敗しました。'; };
-  img.src = dataUrl;
+  // 棒の高さ検出
+  const imageData = ctx.getImageData(0, 0, img.width, img.height);
+  const { values, barGroups, chartBottom } =
+    detectBarsFromImage(imageData, img.width, img.height, yAxisMax, colorMode);
+
+  // X軸ラベルからどの月かをOCRで読み取る
+  ocrStatus.textContent = '⏳ 月ラベルを読み取り中…';
+  const monthIndices = await detectMonthsFromXAxis(img, chartBottom);
+
+  // 棒の値を正しい月に割り当て
+  const monthValues = mapValuesToMonths(values, monthIndices);
+
+  // ハイライト＆ラベル描画
+  highlightDetectedBars(ctx, imageData, img.width, img.height, colorMode);
+  drawBarLabels(ctx, barGroups, values, chartBottom);
+
+  renderExtractedGrid(monthValues);
+
+  const detected = values.filter(v => v > 0).length;
+  const monthInfo = monthIndices && monthIndices.length > 0
+    ? `（${monthIndices[0]}月〜${monthIndices[monthIndices.length - 1]}月）`
+    : '（月ラベル未検出：1月から順に割り当て）';
+  ocrStatus.textContent = detected > 0
+    ? `✅ ${detected}本の棒を検出 ${monthInfo}。値を確認して「適用」ボタンを押してください。`
+    : '⚠️ 棒を検出できませんでした。棒の色を変えて再試行してください。';
+  ocrExtracted.style.display = 'block';
+}
+
+// X軸ラベル領域をOCRして月番号の配列を返す
+async function detectMonthsFromXAxis(img, chartBottom) {
+  // チャート下端より下（x軸ラベル）を切り出す。最低でも画像下部20%を使う
+  const cropY = Math.round(Math.min(chartBottom + 2, img.height * 0.78));
+  const cropH = img.height - cropY;
+  if (cropH < 8) return null;
+
+  // 2倍に拡大してOCR精度向上
+  const tmp = document.createElement('canvas');
+  tmp.width  = img.width * 2;
+  tmp.height = cropH * 2;
+  tmp.getContext('2d').drawImage(img, 0, cropY, img.width, cropH, 0, 0, tmp.width, tmp.height);
+
+  try {
+    const { data: { text } } = await Tesseract.recognize(tmp.toDataURL(), 'eng', {
+      logger: m => {
+        if (m.status === 'recognizing text')
+          document.getElementById('ocrStatus').textContent =
+            `⏳ 月ラベル読み取り中… ${Math.round(m.progress * 100)}%`;
+      }
+    });
+    console.log('X軸OCR:', text);
+    return parseMonthsFromText(text);
+  } catch (e) {
+    console.error('月ラベルOCR失敗:', e);
+    return null;
+  }
+}
+
+// OCRテキストから月番号（1〜12）の配列を抽出
+function parseMonthsFromText(text) {
+  const set = new Set();
+
+  // 「2025/01」「2025-07」など年月形式
+  for (const m of text.matchAll(/20\d{2}[\/\-](\d{1,2})\b/g)) {
+    const v = parseInt(m[1]);
+    if (v >= 1 && v <= 12) set.add(v);
+  }
+  if (set.size > 0) return [...set].sort((a, b) => a - b);
+
+  // 「/01」「/12」のような末尾2桁
+  for (const m of text.matchAll(/\/(\d{2})\b/g)) {
+    const v = parseInt(m[1]);
+    if (v >= 1 && v <= 12) set.add(v);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+// 棒の検出値を月番号に基づいて12要素配列にマッピング
+function mapValuesToMonths(barValues, monthIndices) {
+  const result = new Array(12).fill('');
+  if (!monthIndices || monthIndices.length === 0) {
+    // 月情報なし → 1月から順番に割り当て
+    barValues.forEach((v, i) => { if (i < 12) result[i] = v; });
+    return result;
+  }
+  const n = Math.min(barValues.length, monthIndices.length);
+  for (let i = 0; i < n; i++) {
+    const mi = monthIndices[i] - 1;
+    if (mi >= 0 && mi < 12) result[mi] = barValues[i];
+  }
+  return result;
 }
 
 function isBarPixel(r, g, b, mode) {
@@ -517,30 +600,33 @@ function parseUsageFromOCR(text) {
 
 function renderExtractedGrid(values) {
   const grid = document.getElementById('extractedGrid');
-  // 12件ちょうどなら順に割り当て、それ以外は空欄
-  const assigned = values.length === 12 ? values : new Array(12).fill('');
+
+  // 12要素に正規化（短い配列は後ろを空白で埋める）
+  const assigned = [...values];
+  while (assigned.length < 12) assigned.push('');
 
   let html = '';
   for (let i = 0; i < 12; i++) {
+    const hasVal = assigned[i] !== '' && assigned[i] !== 0;
     html += `
       <div class="ext-month">
-        <span>${i + 1}月</span>
-        <input type="number" id="ext_${i}" value="${assigned[i]}" min="0" placeholder="0">
+        <span style="color:${hasVal ? '#2196F3' : '#999'}; font-weight:${hasVal ? 'bold' : 'normal'};">${i + 1}月</span>
+        <input type="number" id="ext_${i}" value="${assigned[i]}" min="0" placeholder="0"
+               style="border-color:${hasVal ? '#2196F3' : '#ccc'};">
       </div>`;
   }
   grid.innerHTML = html;
 
-  // 12件以外のときは検出値リストを補足表示
-  if (values.length !== 12 && values.length > 0) {
+  const filled = assigned.filter(v => v !== '' && v !== 0).length;
+  if (filled === 0) {
+    grid.insertAdjacentHTML('beforeend',
+      `<p style="width:100%; font-size:0.82em; color:#c00; margin-top:6px;">
+        数値を検出できませんでした。手動で入力してください。
+      </p>`);
+  } else if (filled < 12) {
     grid.insertAdjacentHTML('beforeend',
       `<p style="width:100%; font-size:0.82em; color:#888; margin-top:6px;">
-        検出された数値: ${values.join(', ')}<br>
-        各月の欄に手動で入力してください。
-      </p>`);
-  } else if (values.length === 0) {
-    grid.insertAdjacentHTML('beforeend',
-      `<p style="width:100%; font-size:0.82em; color:#c00;">
-        数値を検出できませんでした。手動で入力してください。
+        青色の月が検出された値です。空白の月は手動で入力してください。
       </p>`);
   }
 }
