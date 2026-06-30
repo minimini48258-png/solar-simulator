@@ -264,6 +264,7 @@
 
 <div class="chart-title" id="genVsUsageChartTitle">月別発電量 ＆ 電気使用量比較グラフ</div>
 <canvas id="genVsUsageChart"></canvas>
+<div id="genVsUsageSummary" style="display:none; text-align:center; margin: -10px 0 20px; font-size:0.95em; color:#333; line-height:2;"></div>
 
 <div class="chart-title" id="monthlyChartTitle">月別支払い推移グラフ</div>
 <canvas id="monthlyChart"></canvas>
@@ -1051,6 +1052,16 @@ function drawGenVsUsageChart(year) {
 
   const genData   = data.見込み発電量.map(v => Math.round(v));
   const usageData = data.使用量.map(v => Math.round(v));
+
+  const totalGen   = genData.reduce((a, b) => a + b, 0);
+  const totalUsage = usageData.reduce((a, b) => a + b, 0);
+  const coverRate  = totalUsage > 0 ? Math.min(100, Math.round(totalGen / totalUsage * 100)) : 0;
+  const summary = document.getElementById('genVsUsageSummary');
+  summary.style.display = 'block';
+  summary.innerHTML =
+    `年間総発電量：<strong>${totalGen.toLocaleString()} kWh</strong>　／　` +
+    `年間総使用量：<strong>${totalUsage.toLocaleString()} kWh</strong>　／　` +
+    `年間自給率：<strong>${coverRate}%</strong>`;
 
   genVsUsageChart = new Chart(ctx, {
     type: 'bar',
