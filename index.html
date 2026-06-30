@@ -262,8 +262,8 @@
 <div id="resultTable"></div>
 <div id="co2Info"></div>
 
-<div class="chart-title" id="genVsCostChartTitle">月別発電量 ＆ 電気代比較グラフ</div>
-<canvas id="genVsCostChart"></canvas>
+<div class="chart-title" id="genVsUsageChartTitle">月別発電量 ＆ 電気使用量比較グラフ</div>
+<canvas id="genVsUsageChart"></canvas>
 
 <div class="chart-title" id="monthlyChartTitle">月別支払い推移グラフ</div>
 <canvas id="monthlyChart"></canvas>
@@ -286,7 +286,7 @@ const TIER3_RATE = 27.60;
 const SURCHARGE = 1.4;
 const STORAGE_KEY = 'solar-simulator-projects';
 
-let yearlyChart, monthlyChart, cumulativeChart, genVsCostChart;
+let yearlyChart, monthlyChart, cumulativeChart, genVsUsageChart;
 let monthlyYearlyData = [];
 let yearlyData = [];
 let lastChartState = null; // 棒グラフ解析の結果を保持（Y軸・月指定変更時に再計算）
@@ -860,7 +860,7 @@ function showSavings(before, after, year = 1) {
 }
 
 function addCopyButtons() {
-  ['genVsCostChart', 'monthlyChart', 'yearlyChart', 'cumulativeChart'].forEach(id => {
+  ['genVsUsageChart', 'monthlyChart', 'yearlyChart', 'cumulativeChart'].forEach(id => {
     const existing = document.getElementById(`btn-copy-${id}`);
     if (existing) existing.remove();
     const canvas = document.getElementById(id);
@@ -1014,7 +1014,7 @@ function populateYearSelector() {
   select.value = 1;
   select.onchange = () => {
     const selectedYear = parseInt(select.value);
-    drawGenVsCostChart(selectedYear);
+    drawGenVsUsageChart(selectedYear);
     drawMonthlyChart(selectedYear);
     displayMonthlyTable(monthlyYearlyData[selectedYear - 1]);
     const totalGen = monthlyYearlyData[selectedYear - 1].見込み発電量.reduce((a, b) => a + b, 0);
@@ -1023,7 +1023,7 @@ function populateYearSelector() {
     showSavings(yearlyData[selectedYear - 1].今までの支払い, yearlyData[selectedYear - 1].合計, selectedYear);
   };
 
-  drawGenVsCostChart(1);
+  drawGenVsUsageChart(1);
   drawMonthlyChart(1);
   displayMonthlyTable(monthlyYearlyData[0]);
   const totalGen = monthlyYearlyData[0].見込み発電量.reduce((a, b) => a + b, 0);
@@ -1031,7 +1031,7 @@ function populateYearSelector() {
   document.getElementById("monthlyTableTitle").innerText = `1年目の月別シミュレーション結果`;
 
   document.getElementById("monthlyTableTitle").style.display = "block";
-  document.getElementById("genVsCostChartTitle").style.display = "block";
+  document.getElementById("genVsUsageChartTitle").style.display = "block";
   document.getElementById("monthlyChartTitle").style.display = "block";
   document.getElementById("yearlyChartTitle").style.display = "block";
   document.getElementById("cumulativeChartTitle").style.display = "block";
@@ -1044,56 +1044,32 @@ function getChartStyle() {
   return { pointRadius: isMobile ? 1 : 3, borderWidth: isMobile ? 1 : 2 };
 }
 
-function drawGenVsCostChart(year) {
+function drawGenVsUsageChart(year) {
   const data = monthlyYearlyData[year - 1];
-  const ctx  = document.getElementById('genVsCostChart').getContext('2d');
-  if (genVsCostChart) genVsCostChart.destroy();
-  const style = getChartStyle();
+  const ctx  = document.getElementById('genVsUsageChart').getContext('2d');
+  if (genVsUsageChart) genVsUsageChart.destroy();
 
-  // 月別発電量
-  const genData  = data.見込み発電量.map(v => Math.round(v));
-  // 太陽光導入前の月額電気代
-  const beforeData = data.今までの支払い.map(v => Math.round(v));
-  // 太陽光導入後の月額合計（相乗りくん+中電-売電）
-  const afterData  = data.合計.map(v => Math.round(v));
+  const genData   = data.見込み発電量.map(v => Math.round(v));
+  const usageData = data.使用量.map(v => Math.round(v));
 
-  genVsCostChart = new Chart(ctx, {
+  genVsUsageChart = new Chart(ctx, {
+    type: 'bar',
     data: {
       labels: months,
       datasets: [
         {
-          type: 'bar',
+          label: '電気使用量 (kWh)',
+          data: usageData,
+          backgroundColor: 'rgba(66, 133, 244, 0.75)',
+          borderColor: 'rgba(30, 80, 180, 1)',
+          borderWidth: 1,
+        },
+        {
           label: '月別発電量 (kWh)',
           data: genData,
-          backgroundColor: 'rgba(255, 200, 50, 0.75)',
+          backgroundColor: 'rgba(255, 200, 50, 0.85)',
           borderColor: 'rgba(200, 140, 0, 1)',
           borderWidth: 1,
-          yAxisID: 'yKwh',
-          order: 2,
-        },
-        {
-          type: 'line',
-          label: '電気代 ソーラー前 (円)',
-          data: beforeData,
-          borderColor: '#888',
-          borderDash: [6, 4],
-          backgroundColor: 'transparent',
-          pointRadius: style.pointRadius,
-          borderWidth: style.borderWidth,
-          yAxisID: 'yYen',
-          order: 0,
-        },
-        {
-          type: 'line',
-          label: '電気代 ソーラー後 (円)',
-          data: afterData,
-          borderColor: '#2266cc',
-          backgroundColor: 'rgba(34, 102, 204, 0.1)',
-          fill: true,
-          pointRadius: style.pointRadius,
-          borderWidth: style.borderWidth,
-          yAxisID: 'yYen',
-          order: 1,
         },
       ]
     },
@@ -1104,29 +1080,21 @@ function drawGenVsCostChart(year) {
         legend: { display: true },
         tooltip: {
           callbacks: {
-            label: ctx => {
-              const units = ['kWh', '円', '円'];
-              return ` ${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} ${units[ctx.datasetIndex]}`;
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} kWh`,
+            afterBody: items => {
+              const usage = items.find(i => i.datasetIndex === 0)?.parsed.y || 0;
+              const gen   = items.find(i => i.datasetIndex === 1)?.parsed.y || 0;
+              const cover = usage > 0 ? Math.min(100, Math.round(gen / usage * 100)) : 0;
+              return [`自給率: ${cover}%`];
             }
           }
         }
       },
       scales: {
-        yKwh: {
-          type: 'linear',
-          position: 'left',
+        y: {
           beginAtZero: true,
-          title: { display: true, text: '発電量 (kWh)', color: '#b08000' },
-          ticks: { color: '#b08000' },
+          title: { display: true, text: 'kWh' },
           grid: { color: 'rgba(0,0,0,0.06)' },
-        },
-        yYen: {
-          type: 'linear',
-          position: 'right',
-          beginAtZero: true,
-          title: { display: true, text: '電気代 (円)', color: '#2266cc' },
-          ticks: { color: '#2266cc' },
-          grid: { drawOnChartArea: false },
         }
       }
     }
