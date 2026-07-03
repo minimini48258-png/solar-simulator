@@ -99,6 +99,35 @@
     button.btn-load:hover   { background: #1565C0; }
     button.btn-delete:hover { background: #b71c1c; }
 
+    /* 編集者設定パネル */
+    #adminPanel {
+      display: none;
+      max-width: 860px;
+      margin: 40px auto 20px;
+      padding: 24px 28px;
+      background: #fffdf0;
+      border: 2px solid #c8a000;
+      border-radius: 10px;
+      text-align: left;
+    }
+    #adminPanel h2 { text-align: center; color: #7a5800; margin: 0 0 4px; }
+    #adminPanel .adm-note { text-align: center; color: #999; font-size: 0.82em; margin-bottom: 20px; }
+    #adminPanel h3 { color: #7a5800; border-bottom: 1px solid #e0c060; padding-bottom: 4px; margin-top: 20px; }
+    #adminPanel table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+    #adminPanel th { background: #f5e890; padding: 6px 10px; }
+    #adminPanel td { padding: 5px 10px; border-bottom: 1px solid #e8e0c0; }
+    #adminPanel input[type="number"] { width: 90px; padding: 4px; font-size: 0.95em; margin: 0; }
+    .adm-sf-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .adm-sf-item { display: flex; flex-direction: column; align-items: center; font-size: 0.85em; }
+    .adm-sf-item input { width: 70px; text-align: center; }
+    .adm-sf-sum { margin-top: 6px; font-size: 0.9em; color: #555; }
+    .adm-btn-row { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
+    .adm-btn-row button { padding: 8px 24px; font-size: 1em; border: none; border-radius: 6px; cursor: pointer; }
+    #admSave  { background: #4CAF50; color: white; }
+    #admReset { background: #aaa; color: white; }
+    #admSave:hover  { background: #388E3C; }
+    #admReset:hover { background: #888; }
+
     @media screen and (max-width: 600px) {
       .slider-input-pair { flex-direction: column; align-items: flex-start; }
       input[type="number"], select { width: 100%; }
@@ -156,11 +185,12 @@
 
 <label>パネルの向き:
   <select id="panelDirection">
-    <option value="1.00">南</option>
-    <option value="0.96">南東</option>
-    <option value="0.96">南西</option>
-    <option value="0.83">東</option>
-    <option value="0.83">西</option>
+    <option value="1.00" data-dir="s">南</option>
+    <option value="0.96" data-dir="se">南東</option>
+    <option value="0.96" data-dir="se">南西</option>
+    <option value="0.83" data-dir="ew">東</option>
+    <option value="0.83" data-dir="ew">西</option>
+    <option value="0.65" data-dir="n">北</option>
   </select>
 </label>
 
@@ -277,15 +307,24 @@
 
 <script>
 const months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-const solarFactors = [0.06, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063];
-const FIT_YEARLY = [...Array(30)].map((_, i) => i < 4 ? 24 : (i < 10 ? 8.5 : 7));
+let solarFactors = [0.060, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063];
+const FIT_YEARLY    = [...Array(30)].map((_, i) => i < 4 ? 24 : (i < 10 ? 8.5 : 7));
 const AINORI_YEARLY = [...Array(30)].map((_, i) => i < 10 ? 21 : (i < 12 ? 7 : 0));
-const BASIC_CHARGE = 1926.84;
-const TIER1_RATE = 21.33;
-const TIER2_RATE = 25.80;
-const TIER3_RATE = 27.60;
-const SURCHARGE = 1.4;
-const STORAGE_KEY = 'solar-simulator-projects';
+let BASIC_CHARGE = 1926.84;
+let TIER1_RATE   = 21.33;
+let TIER2_RATE   = 25.80;
+let TIER3_RATE   = 27.60;
+let RENEWABLE_SURCHARGE = 1.40; // 再エネ賦課金
+let FUEL_ADJ            = 0.00; // 燃料調整費
+const STORAGE_KEY       = 'solar-simulator-projects';
+const ADMIN_KEY         = 'solar-simulator-admin';
+
+const ADMIN_DEFAULTS = {
+  basic: 1926.84, t1: 21.33, t2: 25.80, t3: 27.60,
+  renewable: 1.40, fuel: 0.00,
+  dir_s: 1.00, dir_se: 0.96, dir_ew: 0.83, dir_n: 0.65,
+  sf: [0.060, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063]
+};
 
 let yearlyChart, monthlyChart, cumulativeChart, genVsUsageChart;
 let monthlyYearlyData = [];
@@ -848,7 +887,111 @@ window.addEventListener('DOMContentLoaded', () => {
   initDropZone();
   document.getElementById('yAxisMax').addEventListener('input',  recalcChartGrid);
   document.getElementById('firstBarMonth').addEventListener('change', recalcChartGrid);
+  loadAdminSettings();
+  initAdminPanel();
 });
+
+// ============================================================
+// 編集者設定（?edit で表示）
+// ============================================================
+
+function initAdminPanel() {
+  const show = new URLSearchParams(window.location.search).has('edit');
+  if (!show) return;
+  document.getElementById('adminPanel').style.display = 'block';
+  populateAdminForm();
+  // 月別係数が変わるたびに合計を更新
+  document.querySelectorAll('.adm-sf').forEach(inp =>
+    inp.addEventListener('input', updateSfSum)
+  );
+  updateSfSum();
+}
+
+function populateAdminForm() {
+  const s = getAdminSettings();
+  document.getElementById('adm_basic').value     = s.basic;
+  document.getElementById('adm_t1').value        = s.t1;
+  document.getElementById('adm_t2').value        = s.t2;
+  document.getElementById('adm_t3').value        = s.t3;
+  document.getElementById('adm_renewable').value = s.renewable;
+  document.getElementById('adm_fuel').value      = s.fuel;
+  document.getElementById('adm_dir_s').value     = s.dir_s;
+  document.getElementById('adm_dir_se').value    = s.dir_se;
+  document.getElementById('adm_dir_ew').value    = s.dir_ew;
+  document.getElementById('adm_dir_n').value     = s.dir_n;
+  s.sf.forEach((v, i) => {
+    document.getElementById(`adm_sf_${i}`).value = v;
+  });
+}
+
+function getAdminSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ADMIN_KEY));
+    if (saved) return { ...ADMIN_DEFAULTS, ...saved };
+  } catch (_) {}
+  return { ...ADMIN_DEFAULTS, sf: [...ADMIN_DEFAULTS.sf] };
+}
+
+function loadAdminSettings() {
+  const s = getAdminSettings();
+  BASIC_CHARGE        = s.basic;
+  TIER1_RATE          = s.t1;
+  TIER2_RATE          = s.t2;
+  TIER3_RATE          = s.t3;
+  RENEWABLE_SURCHARGE = s.renewable;
+  FUEL_ADJ            = s.fuel;
+  solarFactors        = [...s.sf];
+  // パネル方角の選択肢の値を更新
+  const dirMap = { s: s.dir_s, se: s.dir_se, ew: s.dir_ew, n: s.dir_n };
+  document.querySelectorAll('#panelDirection option').forEach(opt => {
+    const key = opt.dataset.dir;
+    if (key && dirMap[key] !== undefined) opt.value = dirMap[key];
+  });
+}
+
+function saveAdminSettings() {
+  const sf = [...Array(12)].map((_, i) =>
+    parseFloat(document.getElementById(`adm_sf_${i}`).value) || 0
+  );
+  const s = {
+    basic:     parseFloat(document.getElementById('adm_basic').value),
+    t1:        parseFloat(document.getElementById('adm_t1').value),
+    t2:        parseFloat(document.getElementById('adm_t2').value),
+    t3:        parseFloat(document.getElementById('adm_t3').value),
+    renewable: parseFloat(document.getElementById('adm_renewable').value),
+    fuel:      parseFloat(document.getElementById('adm_fuel').value),
+    dir_s:     parseFloat(document.getElementById('adm_dir_s').value),
+    dir_se:    parseFloat(document.getElementById('adm_dir_se').value),
+    dir_ew:    parseFloat(document.getElementById('adm_dir_ew').value),
+    dir_n:     parseFloat(document.getElementById('adm_dir_n').value),
+    sf,
+  };
+  localStorage.setItem(ADMIN_KEY, JSON.stringify(s));
+  loadAdminSettings();
+  document.getElementById('admSaveMsg').textContent = '✅ 保存しました';
+  setTimeout(() => { document.getElementById('admSaveMsg').textContent = ''; }, 2500);
+}
+
+function resetAdminSettings() {
+  if (!confirm('設定をデフォルト値に戻しますか？')) return;
+  localStorage.removeItem(ADMIN_KEY);
+  loadAdminSettings();
+  populateAdminForm();
+  updateSfSum();
+  document.getElementById('admSaveMsg').textContent = '🔄 デフォルトに戻しました';
+  setTimeout(() => { document.getElementById('admSaveMsg').textContent = ''; }, 2500);
+}
+
+function updateSfSum() {
+  const sum = [...Array(12)].reduce((acc, _, i) => {
+    return acc + (parseFloat(document.getElementById(`adm_sf_${i}`)?.value) || 0);
+  }, 0);
+  const el = document.getElementById('admSfSum');
+  if (el) {
+    el.textContent = `合計: ${sum.toFixed(4)}（理想値: 1.0000）`;
+    el.style.color = Math.abs(sum - 1) < 0.001 ? '#2a8a2a' : '#cc4400';
+  }
+}
 
 // ---- シミュレーション ----
 
@@ -970,7 +1113,7 @@ function calculateChudenCharge(kWh) {
   if (kWh <= 120) cost = kWh * TIER1_RATE;
   else if (kWh <= 300) cost = 120 * TIER1_RATE + (kWh - 120) * TIER2_RATE;
   else cost = 120 * TIER1_RATE + 180 * TIER2_RATE + (kWh - 300) * TIER3_RATE;
-  return cost + BASIC_CHARGE + (kWh * SURCHARGE);
+  return cost + BASIC_CHARGE + kWh * (RENEWABLE_SURCHARGE + FUEL_ADJ);
 }
 
 function exportCSV() {
@@ -1182,5 +1325,62 @@ function drawCumulativeChart(data) {
   });
 }
 </script>
+
+<!-- ============================================================
+     編集者設定パネル（URL に ?edit を付けると表示）
+     ============================================================ -->
+<div id="adminPanel">
+  <h2>⚙ 編集者設定</h2>
+  <p class="adm-note">URL末尾に <code>?edit</code> を付けると表示されます。設定はブラウザに保存されます。</p>
+
+  <h3>中部電力 料金設定</h3>
+  <table>
+    <thead><tr><th>項目</th><th>値</th><th>単位</th><th>説明</th></tr></thead>
+    <tbody>
+      <tr><td>基本料金</td><td><input type="number" id="adm_basic" step="0.01" min="0"></td><td>円/月</td><td>毎月固定でかかる料金</td></tr>
+      <tr><td>第1段階単価</td><td><input type="number" id="adm_t1" step="0.01" min="0"></td><td>円/kWh</td><td>0〜120 kWh</td></tr>
+      <tr><td>第2段階単価</td><td><input type="number" id="adm_t2" step="0.01" min="0"></td><td>円/kWh</td><td>121〜300 kWh</td></tr>
+      <tr><td>第3段階単価</td><td><input type="number" id="adm_t3" step="0.01" min="0"></td><td>円/kWh</td><td>301 kWh〜</td></tr>
+      <tr><td>再エネ賦課金</td><td><input type="number" id="adm_renewable" step="0.01" min="0"></td><td>円/kWh</td><td>使用量に比例して加算</td></tr>
+      <tr><td>燃料調整費</td><td><input type="number" id="adm_fuel" step="0.01"></td><td>円/kWh</td><td>マイナスもあり（月次更新）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>パネル方角別 発電量係数</h3>
+  <table>
+    <thead><tr><th>方角</th><th>係数</th><th>説明</th></tr></thead>
+    <tbody>
+      <tr><td>南</td>      <td><input type="number" id="adm_dir_s"  step="0.01" min="0" max="2"></td><td>基準値（1.00）</td></tr>
+      <tr><td>南東・南西</td><td><input type="number" id="adm_dir_se" step="0.01" min="0" max="2"></td><td>南に対する割合</td></tr>
+      <tr><td>東・西</td>  <td><input type="number" id="adm_dir_ew" step="0.01" min="0" max="2"></td><td>南に対する割合</td></tr>
+      <tr><td>北</td>      <td><input type="number" id="adm_dir_n"  step="0.01" min="0" max="2"></td><td>南に対する割合</td></tr>
+    </tbody>
+  </table>
+
+  <h3>月別発電係数（12ヶ月分）</h3>
+  <p style="font-size:0.85em; color:#666; margin:4px 0 10px;">各月の発電量の比率。合計が 1.0000 になるように設定してください。</p>
+  <div class="adm-sf-grid">
+    <div class="adm-sf-item"><span>1月</span> <input type="number" id="adm_sf_0"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>2月</span> <input type="number" id="adm_sf_1"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>3月</span> <input type="number" id="adm_sf_2"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>4月</span> <input type="number" id="adm_sf_3"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>5月</span> <input type="number" id="adm_sf_4"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>6月</span> <input type="number" id="adm_sf_5"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>7月</span> <input type="number" id="adm_sf_6"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>8月</span> <input type="number" id="adm_sf_7"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>9月</span> <input type="number" id="adm_sf_8"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>10月</span><input type="number" id="adm_sf_9"  class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>11月</span><input type="number" id="adm_sf_10" class="adm-sf" step="0.001" min="0"></div>
+    <div class="adm-sf-item"><span>12月</span><input type="number" id="adm_sf_11" class="adm-sf" step="0.001" min="0"></div>
+  </div>
+  <p class="adm-sf-sum" id="admSfSum"></p>
+
+  <div class="adm-btn-row">
+    <button id="admSave"  onclick="saveAdminSettings()">💾 保存して適用</button>
+    <button id="admReset" onclick="resetAdminSettings()">🔄 デフォルトに戻す</button>
+    <span id="admSaveMsg" style="align-self:center; font-size:0.9em;"></span>
+  </div>
+</div>
+
 </body>
 </html>
