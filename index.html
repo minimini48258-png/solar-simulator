@@ -279,7 +279,7 @@
 <br>
 <button onclick="simulate()">シミュレーション開始</button>
 <button onclick="exportCSV()">CSVエクスポート</button>
-<button onclick="exportPDF()">PDFエクスポート</button>
+<button onclick="exportPDF()">📄 レポート出力</button>
 <br>
 <div id="displayYearContainer">
   <label for="displayYear">表示する年：</label>
@@ -1132,18 +1132,255 @@ function exportCSV() {
 }
 
 function exportPDF() {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  doc.text("太陽光シミュレーション結果", 10, 10);
-  let y = 20;
-  const table = document.querySelector("#resultTable table");
-  if (!table) return;
-  table.querySelectorAll("tr").forEach(row => {
-    const line = Array.from(row.querySelectorAll("th, td")).map(td => td.innerText).join("  ");
-    doc.text(line, 10, y);
-    y += 7;
-  });
-  doc.save("solar_simulation.pdf");
+  if (!yearlyData.length) { alert('先にシミュレーションを実行してください。'); return; }
+
+  const year    = parseInt(document.getElementById('displayYear')?.value) || 1;
+  const data    = monthlyYearlyData[year - 1];
+  const yData   = yearlyData[year - 1];
+
+  // 入力条件
+  const cap     = document.getElementById('capacity')?.value || '-';
+  const dirSel  = document.getElementById('panelDirection');
+  const dirTxt  = dirSel?.options[dirSel.selectedIndex]?.text || '-';
+  const perKw   = document.getElementById('perKwGenVal')?.value || '-';
+  const projName = document.getElementById('projectName')?.value || '';
+  const dayRatio = Math.round(parseFloat(document.getElementById('dayRatio')?.value || 0.5) * 100);
+
+  // 年間集計
+  const totalGen    = data.見込み発電量.reduce((a, b) => a + b, 0);
+  const totalUsage  = data.使用量.reduce((a, b) => a + b, 0);
+  const coverRate   = totalUsage > 0 ? Math.min(100, Math.round(totalGen / totalUsage * 100)) : 0;
+  const annualBefore = Math.round(yData.今までの支払い);
+  const annualAfter  = Math.round(yData.合計);
+  const annualSaving = annualBefore - annualAfter;
+  const co2          = (totalGen * 0.00035).toFixed(2);
+
+  // グラフ画像
+  const img = id => { const c = document.getElementById(id); return c ? c.toDataURL('image/png') : ''; };
+  const genImg      = img('genVsUsageChart');
+  const monthlyImg  = img('monthlyChart');
+  const yearlyImg   = img('yearlyChart');
+  const cumulImg    = img('cumulativeChart');
+
+  // 月別詳細テーブル行
+  const mLabels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  const rowConf = [
+    { key: '見込み発電量',     unit: 'kWh', label: '見込み発電量' },
+    { key: '使用量',           unit: 'kWh', label: '電気使用量' },
+    { key: '売電量',           unit: 'kWh', label: '余剰売電量' },
+    { key: '購入量',           unit: 'kWh', label: '購入電力量' },
+    { key: '今までの支払い',   unit: '円',  label: '月額電気代（ソーラー前）' },
+    { key: '相乗りくん支払額', unit: '円',  label: '相乗りくん支払額' },
+    { key: '中電支払額',       unit: '円',  label: '中電支払額' },
+    { key: '売電収入',         unit: '円',  label: '売電収入' },
+    { key: '合計',             unit: '円',  label: '月額合計（ソーラー後）' },
+  ];
+  const tableRows = rowConf.map(({ key, unit, label }) => {
+    const vals = data[key].map(v => Math.round(v).toLocaleString());
+    const annual = Math.round(data[key].reduce((a, b) => a + b, 0)).toLocaleString();
+    return `<tr>
+      <td class="row-label">${label}<span class="row-unit">(${unit})</span></td>
+      ${vals.map(v => `<td>${v}</td>`).join('')}
+      <td class="annual-col">${annual}</td>
+    </tr>`;
+  }).join('');
+
+  const today  = new Date();
+  const dateStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日`;
+
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>太陽光シミュレーション結果レポート</title>
+<style>
+  @page { margin: 12mm 14mm; }
+  @media print {
+    .no-print { display: none !important; }
+    .page-break { page-break-before: always; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Hiragino Kaku Gothic ProN','Yu Gothic','Meiryo',sans-serif;
+         color: #1a1a1a; background: #fff; font-size: 13px; }
+  .page { max-width: 860px; margin: 0 auto; padding: 24px 28px; }
+
+  /* 印刷バー */
+  .print-bar { background: #1a3f6f; color: white; padding: 10px 18px;
+               display: flex; align-items: center; justify-content: space-between;
+               border-radius: 6px; margin-bottom: 20px; }
+  .print-bar span { font-size: 0.9em; opacity: 0.9; }
+  .print-bar button { background: white; color: #1a3f6f; border: none;
+                      padding: 7px 18px; font-size: 0.95em; border-radius: 4px;
+                      cursor: pointer; font-weight: bold; }
+  .print-bar button:hover { background: #dce8ff; }
+
+  /* ヘッダー */
+  .rpt-header { background: #1a3f6f; color: white; padding: 18px 24px;
+                border-radius: 6px; margin-bottom: 16px; }
+  .rpt-header h1 { font-size: 1.25em; margin-bottom: 4px; }
+  .rpt-header .sub { font-size: 0.88em; opacity: 0.85; }
+  .rpt-header .meta { font-size: 0.82em; opacity: 0.7; margin-top: 8px; }
+
+  /* KPIボックス */
+  .kpi-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .kpi { flex: 1; min-width: 140px; padding: 12px 14px; border-radius: 6px;
+         border-left: 4px solid; }
+  .kpi.blue   { background: #eef3ff; border-color: #2a6fcc; }
+  .kpi.green  { background: #edfdf0; border-color: #28a048; }
+  .kpi.teal   { background: #ebfaf8; border-color: #0a8a7a; }
+  .kpi.orange { background: #fff5eb; border-color: #d06820; }
+  .kpi-label { font-size: 0.76em; color: #666; margin-bottom: 4px; }
+  .kpi-val   { font-size: 1.45em; font-weight: bold; line-height: 1.1; }
+  .kpi.blue   .kpi-val { color: #1a3f8f; }
+  .kpi.green  .kpi-val { color: #186028; }
+  .kpi.teal   .kpi-val { color: #0a5a52; }
+  .kpi.orange .kpi-val { color: #904010; }
+  .kpi-unit  { font-size: 0.78em; color: #999; }
+
+  /* 条件テーブル */
+  .cond-table { width: 100%; border-collapse: collapse; font-size: 0.88em; margin-bottom: 16px; }
+  .cond-table td { padding: 5px 10px; }
+  .cond-table tr:nth-child(odd) { background: #f6f7fa; }
+  .cond-key { color: #666; white-space: nowrap; width: 120px; }
+  .cond-val { font-weight: 600; padding-right: 20px; }
+
+  /* セクション見出し */
+  h2.sec { font-size: 0.95em; color: #1a3f6f; border-bottom: 2px solid #2a6fcc;
+           padding-bottom: 4px; margin: 18px 0 10px; }
+
+  /* CO2ボックス */
+  .co2-box { background: #e8f5e9; border: 1px solid #66bb6a; border-radius: 6px;
+             padding: 10px 20px; text-align: center; margin: 12px 0; display: flex;
+             align-items: center; justify-content: center; gap: 16px; }
+  .co2-val { font-size: 1.5em; font-weight: bold; color: #2a7a2a; }
+  .co2-desc { font-size: 0.82em; color: #4a9a4a; }
+
+  /* グラフ画像 */
+  .chart-img { width: 100%; border: 1px solid #e0e8f0; border-radius: 4px; margin-bottom: 4px; }
+
+  /* 月別テーブル */
+  .month-table { width: 100%; border-collapse: collapse; font-size: 0.74em; }
+  .month-table thead th { background: #1a3f6f; color: white; padding: 5px 3px;
+                          text-align: center; font-weight: normal; }
+  .month-table thead th:first-child { text-align: left; padding-left: 8px; }
+  .month-table td { padding: 4px 3px; text-align: right; border-bottom: 1px solid #eee; }
+  .month-table tr:nth-child(even) { background: #f7f8fc; }
+  .month-table .row-label { text-align: left; padding-left: 8px; color: #444; }
+  .month-table .row-unit  { font-size: 0.82em; color: #999; margin-left: 2px; }
+  .month-table .annual-col { font-weight: bold; background: #eef3ff; color: #1a3f8f;
+                              border-left: 1px solid #c0d0f0; }
+
+  .footer { text-align: center; font-size: 0.72em; color: #bbb; margin-top: 28px;
+            padding-top: 10px; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- 印刷バー（印刷時非表示） -->
+  <div class="no-print print-bar">
+    <span>ブラウザの「印刷」→「PDFに保存」でダウンロードできます</span>
+    <button onclick="window.print()">🖨️ 印刷 / PDF保存</button>
+  </div>
+
+  <!-- ヘッダー -->
+  <div class="rpt-header">
+    <h1>太陽光シミュレーション結果レポート</h1>
+    <div class="sub">NPO法人上田市民エネルギー 相乗りくんサービス</div>
+    <div class="meta">${projName ? `案件名: ${projName}　｜　` : ''}作成日: ${dateStr}　｜　表示年: ${year}年目</div>
+  </div>
+
+  <!-- KPIボックス -->
+  <div class="kpi-row">
+    <div class="kpi blue">
+      <div class="kpi-label">年間総発電量</div>
+      <div class="kpi-val">${Math.round(totalGen).toLocaleString()}</div>
+      <div class="kpi-unit">kWh</div>
+    </div>
+    <div class="kpi blue">
+      <div class="kpi-label">年間総使用量</div>
+      <div class="kpi-val">${Math.round(totalUsage).toLocaleString()}</div>
+      <div class="kpi-unit">kWh</div>
+    </div>
+    <div class="kpi teal">
+      <div class="kpi-label">年間自給率</div>
+      <div class="kpi-val">${coverRate}</div>
+      <div class="kpi-unit">%</div>
+    </div>
+    <div class="kpi green">
+      <div class="kpi-label">年間削減額</div>
+      <div class="kpi-val">${annualSaving.toLocaleString()}</div>
+      <div class="kpi-unit">円 / 年</div>
+    </div>
+    <div class="kpi orange">
+      <div class="kpi-label">30年間削減合計</div>
+      <div class="kpi-val">${Math.round(yearlyData.reduce((a,d) => a + (d.今までの支払い - d.合計), 0)).toLocaleString()}</div>
+      <div class="kpi-unit">円</div>
+    </div>
+  </div>
+
+  <!-- シミュレーション条件 -->
+  <h2 class="sec">シミュレーション条件</h2>
+  <table class="cond-table">
+    <tr><td class="cond-key">設備容量</td><td class="cond-val">${cap} kW</td>
+        <td class="cond-key">パネルの向き</td><td class="cond-val">${dirTxt}</td></tr>
+    <tr><td class="cond-key">年間発電量/kW</td><td class="cond-val">${Number(perKw).toLocaleString()} kWh/kW</td>
+        <td class="cond-key">昼間使用比率</td><td class="cond-val">${dayRatio}%</td></tr>
+    <tr><td class="cond-key">ソーラー前 年間電気代</td><td class="cond-val">${annualBefore.toLocaleString()} 円</td>
+        <td class="cond-key">ソーラー後 年間電気代</td><td class="cond-val">${annualAfter.toLocaleString()} 円</td></tr>
+  </table>
+
+  <!-- 発電量vs使用量グラフ -->
+  <h2 class="sec">月別発電量 ＆ 電気使用量比較（${year}年目）</h2>
+  ${genImg ? `<img class="chart-img" src="${genImg}">` : '<p style="color:#aaa">グラフ画像なし</p>'}
+
+  <!-- CO2 -->
+  <div class="co2-box">
+    <div>
+      <div class="co2-val">${co2} <span style="font-size:0.7em">トン-CO₂</span></div>
+    </div>
+    <div class="co2-desc">年間CO₂削減量の見込み<br>（0.35 kg-CO₂/kWh で算出）</div>
+  </div>
+
+  <!-- 月別支払いグラフ -->
+  <div class="page-break"></div>
+  <h2 class="sec">月別支払い推移（${year}年目）</h2>
+  ${monthlyImg ? `<img class="chart-img" src="${monthlyImg}">` : ''}
+
+  <!-- 月別詳細テーブル -->
+  <h2 class="sec">月別シミュレーション詳細（${year}年目）</h2>
+  <table class="month-table">
+    <thead>
+      <tr>
+        <th>項目</th>
+        ${mLabels.map(m => `<th>${m}</th>`).join('')}
+        <th>年間合計</th>
+      </tr>
+    </thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+
+  <!-- 年別・累積グラフ -->
+  <div class="page-break"></div>
+  <h2 class="sec">年別支払い推移グラフ（30年間）</h2>
+  ${yearlyImg ? `<img class="chart-img" src="${yearlyImg}">` : ''}
+  <h2 class="sec">累積支払いグラフ（30年間）</h2>
+  ${cumulImg  ? `<img class="chart-img" src="${cumulImg}">` : ''}
+
+  <div class="footer">
+    本レポートは上田市民エネルギー 相乗りくんシミュレーターにより作成されました。
+    実際の発電量・電気代は気象条件・料金改定等により異なる場合があります。
+  </div>
+</div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) { alert('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。'); return; }
+  win.document.write(html);
+  win.document.close();
+  win.focus();
 }
 
 function populateYearSelector() {
