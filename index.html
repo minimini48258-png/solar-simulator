@@ -178,8 +178,8 @@
 </div>
 <div class="slider-input-pair">
   <label>相乗りくん単価 (1〜10年目) [円/kWh]:
-    <input type="range" id="ainoriRate" value="18" min="10" max="30" step="0.5" oninput="document.getElementById('ainoriRateVal').value = this.value">
-    <input type="number" id="ainoriRateVal" value="18" step="0.1" min="10" max="30" oninput="document.getElementById('ainoriRate').value = this.value">
+    <input type="range" id="ainoriRate" value="21" min="10" max="30" step="0.5" oninput="document.getElementById('ainoriRateVal').value = this.value">
+    <input type="number" id="ainoriRateVal" value="21" step="0.1" min="10" max="30" oninput="document.getElementById('ainoriRate').value = this.value">
   </label>
 </div>
 
@@ -310,7 +310,7 @@ const months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", 
 let solarFactors = [0.060, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063];
 const FIT_YEARLY    = [...Array(30)].map((_, i) => i < 4 ? 24 : (i < 10 ? 8.5 : 7));
 // AINORI_YEARLY: years 1-10 は simulate() でUIスライダー値を使用、11-12は7円、13+は0円
-const AINORI_YEARLY = [...Array(30)].map((_, i) => i < 10 ? 18 : (i < 12 ? 7 : 0));
+const AINORI_YEARLY = [...Array(30)].map((_, i) => i < 10 ? 21 : (i < 12 ? 7 : 0));
 let BASIC_CHARGE = 1926.84;
 let TIER1_RATE   = 21.33;
 let TIER2_RATE   = 25.80;
@@ -1038,7 +1038,7 @@ function simulate() {
   // 相乗りくん月額定額の計算
   //   基準発電量 = floor( floor(kW × 100)/100 × 1350 ÷ 12 )
   //   月額 = 単価(円/kWh) × 基準発電量
-  const uiAinoriRate   = parseFloat(document.getElementById('ainoriRate').value) || 18;
+  const uiAinoriRate   = parseFloat(document.getElementById('ainoriRate').value) || 21;
   const capTrunc       = Math.floor(cap * 100) / 100; // kW 小数点第3位以下切り捨て
   const monthlyBaseKwh = Math.floor(capTrunc * 1350 / 12); // 小数点以下切り捨て
 
