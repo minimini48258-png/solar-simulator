@@ -128,6 +128,16 @@
     #admSave:hover  { background: #388E3C; }
     #admReset:hover { background: #888; }
 
+    /* 電力会社プリセット */
+    .company-row { display: flex; align-items: center; gap: 8px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; font-size: 0.95em; }
+    .company-row select { padding: 5px 8px; font-size: 0.95em; }
+    .company-note { font-size: 0.78em; color: #999; }
+
+    /* グラフ表示切替 */
+    .chart-toggles { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -18px 0 22px; }
+    .ct-btn { padding: 4px 12px; border-radius: 14px; border: 2px solid transparent; font-size: 0.8em; cursor: pointer; background: white; transition: opacity 0.2s; white-space: nowrap; }
+    .ct-btn.ds-hidden { opacity: 0.3; text-decoration: line-through; }
+
     @media screen and (max-width: 600px) {
       .slider-input-pair { flex-direction: column; align-items: flex-start; }
       input[type="number"], select { width: 100%; }
@@ -156,6 +166,22 @@
     <button class="btn-load" onclick="loadProject()">読み込み</button>
     <button class="btn-delete" onclick="deleteProject()">削除</button>
   </div>
+</div>
+
+<!-- 電力会社プリセット -->
+<div class="company-row">
+  <label>電力会社：
+    <select id="companySelect" onchange="applyCompanyPreset(this.value)">
+      <option value="chubu">中部電力</option>
+      <option value="tokyo">東京電力（概算）</option>
+      <option value="kansai">関西電力（概算）</option>
+      <option value="tohoku">東北電力（概算）</option>
+      <option value="kyushu">九州電力（概算）</option>
+      <option value="chugoku">中国電力（概算）</option>
+      <option value="custom">カスタム（手動設定）</option>
+    </select>
+  </label>
+  <span class="company-note">※概算値。「?edit」の管理者設定で詳細変更できます。</span>
 </div>
 
 <div class="slider-input-pair">
@@ -294,16 +320,20 @@
 
 <div class="chart-title" id="genVsUsageChartTitle">月別発電量 ＆ 電気使用量比較グラフ</div>
 <canvas id="genVsUsageChart"></canvas>
+<div id="genVsUsageChart-toggles" class="chart-toggles"></div>
 <div id="genVsUsageSummary" style="display:none; text-align:center; margin: -10px 0 20px; font-size:0.95em; color:#333; line-height:2;"></div>
 
 <div class="chart-title" id="monthlyChartTitle">月別支払い推移グラフ</div>
 <canvas id="monthlyChart"></canvas>
+<div id="monthlyChart-toggles" class="chart-toggles"></div>
 
 <div class="chart-title" id="yearlyChartTitle">年別支払い推移グラフ</div>
 <canvas id="yearlyChart"></canvas>
+<div id="yearlyChart-toggles" class="chart-toggles"></div>
 
 <div class="chart-title" id="cumulativeChartTitle">累積支払いグラフ</div>
 <canvas id="cumulativeChart"></canvas>
+<div id="cumulativeChart-toggles" class="chart-toggles"></div>
 
 <script>
 const months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
@@ -325,6 +355,17 @@ const ADMIN_DEFAULTS = {
   renewable: 1.40, fuel: 0.00,
   dir_s: 1.00, dir_se: 0.96, dir_ew: 0.83, dir_n: 0.65,
   sf: [0.060, 0.073, 0.066, 0.091, 0.096, 0.103, 0.092, 0.093, 0.098, 0.086, 0.079, 0.063]
+};
+
+// 電力会社プリセット（概算値・2024年度時点）
+const COMPANY_PRESETS = {
+  chubu:   { basic: 1926.84, t1: 21.33, t2: 25.80, t3: 27.60, renewable: 1.40, fuel: 0.00 },
+  tokyo:   { basic: 1180.96, t1: 32.05, t2: 37.17, t3: 40.69, renewable: 3.49, fuel: 0.00 },
+  kansai:  { basic:  363.00, t1: 23.78, t2: 28.01, t3: 32.27, renewable: 3.49, fuel: 0.00 },
+  tohoku:  { basic: 1068.04, t1: 29.62, t2: 34.78, t3: 38.12, renewable: 3.49, fuel: 0.00 },
+  kyushu:  { basic: 1188.00, t1: 22.95, t2: 26.04, t3: 28.72, renewable: 3.49, fuel: 0.00 },
+  chugoku: { basic: 1935.36, t1: 25.09, t2: 30.38, t3: 34.08, renewable: 3.49, fuel: 0.00 },
+  custom:  null,
 };
 
 let yearlyChart, monthlyChart, cumulativeChart, genVsUsageChart;
@@ -950,6 +991,51 @@ function loadAdminSettings() {
   });
 }
 
+// 電力会社プリセット適用
+function applyCompanyPreset(key) {
+  const preset = COMPANY_PRESETS[key];
+  if (!preset) return; // custom は何もしない
+
+  // 現在の admin 設定を読み込み、料金部分だけ上書き
+  const current = getAdminSettings();
+  const merged  = { ...current, ...preset };
+  localStorage.setItem(ADMIN_KEY, JSON.stringify(merged));
+  loadAdminSettings();
+
+  // 管理者フォームが開いていれば値を更新
+  if (document.getElementById('adminPanel').style.display !== 'none') {
+    populateAdminForm();
+  }
+}
+
+// グラフ表示切替ボタンを描画
+function renderChartToggles(containerId, chartInstance) {
+  const container = document.getElementById(containerId + '-toggles');
+  if (!container || !chartInstance) return;
+  container.innerHTML = '';
+
+  chartInstance.data.datasets.forEach((ds, idx) => {
+    const color = (typeof ds.borderColor === 'string' ? ds.borderColor : null)
+               || (typeof ds.backgroundColor === 'string' ? ds.backgroundColor : null)
+               || '#888';
+    const btn = document.createElement('button');
+    btn.className = 'ct-btn';
+    btn.style.borderColor = color;
+    btn.style.color = color;
+    btn.textContent = ds.label;
+
+    const meta = chartInstance.getDatasetMeta(idx);
+    if (meta.hidden) btn.classList.add('ds-hidden');
+
+    btn.onclick = () => {
+      meta.hidden = !meta.hidden;
+      chartInstance.update();
+      btn.classList.toggle('ds-hidden', !!meta.hidden);
+    };
+    container.appendChild(btn);
+  });
+}
+
 function saveAdminSettings() {
   const sf = [...Array(12)].map((_, i) =>
     parseFloat(document.getElementById(`adm_sf_${i}`).value) || 0
@@ -1502,6 +1588,7 @@ function drawGenVsUsageChart(year) {
       }
     }
   });
+  renderChartToggles('genVsUsageChart', genVsUsageChart);
 }
 
 function drawMonthlyChart(year) {
@@ -1527,6 +1614,7 @@ function drawMonthlyChart(year) {
       scales: { y: { beginAtZero: true } }
     }
   });
+  renderChartToggles('monthlyChart', monthlyChart);
 }
 
 function drawYearlyChart(data) {
@@ -1551,6 +1639,7 @@ function drawYearlyChart(data) {
       scales: { y: { beginAtZero: true } }
     }
   });
+  renderChartToggles('yearlyChart', yearlyChart);
 }
 
 function drawCumulativeChart(data) {
@@ -1563,7 +1652,7 @@ function drawCumulativeChart(data) {
       labels: data.累積合計.map((_, i) => `${i + 1}年目`),
       datasets: [
         { label: '累積合計', data: data.累積合計, borderColor: 'black', ...style },
-        { label: '累積今までの支払い', data: data.累積今までの支払い, borderColor: 'gray', borderDash: [5, 5], ...style }
+        { label: '累積今までの支払い', data: data.累積今までの支払い, borderColor: 'gray', borderDash: [5,5], ...style }
       ]
     },
     options: {
@@ -1572,6 +1661,7 @@ function drawCumulativeChart(data) {
       scales: { y: { beginAtZero: true } }
     }
   });
+  renderChartToggles('cumulativeChart', cumulativeChart);
 }
 </script>
 
@@ -1582,7 +1672,19 @@ function drawCumulativeChart(data) {
   <h2>⚙ 編集者設定</h2>
   <p class="adm-note">URL末尾に <code>?edit</code> を付けると表示されます。設定はブラウザに保存されます。</p>
 
-  <h3>中部電力 料金設定</h3>
+  <h3>電力会社 料金設定</h3>
+  <p style="font-size:0.85em; color:#666; margin:4px 0 10px;">
+    プリセットを選ぶと概算値が自動入力されます。実際の料金は各電力会社の最新情報をご確認ください。<br>
+    <select onchange="applyCompanyPreset(this.value); populateAdminForm();" style="margin-top:6px; padding:4px 8px;">
+      <option value="chubu">中部電力</option>
+      <option value="tokyo">東京電力（概算）</option>
+      <option value="kansai">関西電力（概算）</option>
+      <option value="tohoku">東北電力（概算）</option>
+      <option value="kyushu">九州電力（概算）</option>
+      <option value="chugoku">中国電力（概算）</option>
+    </select>
+    を選択して自動入力 → 必要に応じて下記で微調整
+  </p>
   <table>
     <thead><tr><th>項目</th><th>値</th><th>単位</th><th>説明</th></tr></thead>
     <tbody>
