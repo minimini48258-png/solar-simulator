@@ -133,6 +133,12 @@
     .company-row select { padding: 5px 8px; font-size: 0.95em; }
     .company-note { font-size: 0.78em; color: #999; }
 
+    /* プリセット一覧 */
+    .adm-preset-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #eee; }
+    .adm-preset-row span { flex: 1; font-size: 0.95em; }
+    .adm-preset-row button { padding: 4px 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 0.85em; background: #3a86ff; color: white; }
+    .adm-preset-del { background: #e74c3c !important; }
+
     /* グラフ表示切替 */
     .chart-toggles { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -18px 0 22px; }
     .ct-btn { padding: 4px 12px; border-radius: 14px; border: 2px solid transparent; font-size: 0.8em; cursor: pointer; background: white; transition: opacity 0.2s; white-space: nowrap; }
@@ -171,12 +177,11 @@
 <!-- 電力会社プリセット -->
 <div class="company-row">
   <label>電力会社：
-    <select id="companySelect" onchange="applyCompanyPreset(this.value)">
-      <option value="chubu">中部電力</option>
-      <option value="custom">カスタム（?editで設定）</option>
+    <select id="companySelect" onchange="applySelectedPreset(this.value)">
+      <option value="chubu">中部電力（デフォルト）</option>
     </select>
   </label>
-  <span class="company-note">カスタムの場合は <code>?edit</code> の管理者設定で料金を変更・保存できます。</span>
+  <span class="company-note"><code>?edit</code> の管理者設定で料金を変更・プリセット保存できます。</span>
 </div>
 
 <div class="slider-input-pair">
@@ -344,6 +349,7 @@ let RENEWABLE_SURCHARGE = 1.40; // 再エネ賦課金
 let FUEL_ADJ            = 0.00; // 燃料調整費
 const STORAGE_KEY       = 'solar-simulator-projects';
 const ADMIN_KEY         = 'solar-simulator-admin';
+const RATE_PRESETS_KEY  = 'solar-simulator-rate-presets';
 
 const ADMIN_DEFAULTS = {
   basic: 1926.84, t1: 21.33, t2: 25.80, t3: 27.60,
@@ -926,6 +932,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('firstBarMonth').addEventListener('change', recalcChartGrid);
   loadAdminSettings();
   initAdminPanel();
+  refreshCompanySelect();
 });
 
 // ============================================================
@@ -942,6 +949,7 @@ function initAdminPanel() {
     inp.addEventListener('input', updateSfSum)
   );
   updateSfSum();
+  refreshPresetList();
 }
 
 function populateAdminForm() {
@@ -986,21 +994,128 @@ function loadAdminSettings() {
   });
 }
 
-// 電力会社プリセット適用
-function applyCompanyPreset(key) {
-  const preset = COMPANY_PRESETS[key];
-  if (!preset) return; // custom は何もしない
+// ---- プリセット管理 ----
 
-  // 現在の admin 設定を読み込み、料金部分だけ上書き
-  const current = getAdminSettings();
-  const merged  = { ...current, ...preset };
+function getRatePresets() {
+  try { return JSON.parse(localStorage.getItem(RATE_PRESETS_KEY)) || {}; } catch (_) { return {}; }
+}
+
+function saveRatePreset(name, rates) {
+  const presets = getRatePresets();
+  presets[name] = rates;
+  localStorage.setItem(RATE_PRESETS_KEY, JSON.stringify(presets));
+}
+
+function deleteRatePreset(name) {
+  const presets = getRatePresets();
+  delete presets[name];
+  localStorage.setItem(RATE_PRESETS_KEY, JSON.stringify(presets));
+}
+
+// 現在の管理フォームの料金値を返す
+function collectRatesFromForm() {
+  return {
+    basic:     parseFloat(document.getElementById('adm_basic').value)     || 0,
+    t1:        parseFloat(document.getElementById('adm_t1').value)        || 0,
+    t2:        parseFloat(document.getElementById('adm_t2').value)        || 0,
+    t3:        parseFloat(document.getElementById('adm_t3').value)        || 0,
+    renewable: parseFloat(document.getElementById('adm_renewable').value) || 0,
+    fuel:      parseFloat(document.getElementById('adm_fuel').value)      || 0,
+  };
+}
+
+// 現在のフォーム値を名前付きプリセットとして保存
+function saveCurrentAsPreset() {
+  const name = document.getElementById('admPresetName').value.trim();
+  if (!name) { alert('プリセット名を入力してください'); return; }
+  saveRatePreset(name, collectRatesFromForm());
+  refreshCompanySelect(name);
+  refreshPresetList();
+  document.getElementById('admPresetMsg').textContent = `✅ "${name}" を保存しました`;
+  setTimeout(() => { document.getElementById('admPresetMsg').textContent = ''; }, 2500);
+}
+
+// 選択されたプリセット（組み込み or 保存済み）を適用
+function applySelectedPreset(value) {
+  let rates;
+  if (value === 'chubu') {
+    rates = COMPANY_PRESETS.chubu;
+  } else {
+    rates = getRatePresets()[value];
+  }
+  if (!rates) return;
+  const merged = { ...getAdminSettings(), ...rates };
   localStorage.setItem(ADMIN_KEY, JSON.stringify(merged));
   loadAdminSettings();
-
-  // 管理者フォームが開いていれば値を更新
   if (document.getElementById('adminPanel').style.display !== 'none') {
     populateAdminForm();
   }
+}
+
+// #companySelect のオプションを再構築
+function refreshCompanySelect(selectValue) {
+  const sel = document.getElementById('companySelect');
+  const presets = getRatePresets();
+  const prevVal = selectValue !== undefined ? selectValue : sel.value;
+  sel.innerHTML = '<option value="chubu">中部電力（デフォルト）</option>';
+  Object.keys(presets).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (prevVal && [...sel.options].some(o => o.value === prevVal)) {
+    sel.value = prevVal;
+  }
+}
+
+// 管理パネルの保存済みプリセット一覧を再描画
+function refreshPresetList() {
+  const container = document.getElementById('admPresetList');
+  if (!container) return;
+  const presets = getRatePresets();
+  const names = Object.keys(presets);
+  if (names.length === 0) {
+    container.innerHTML = '<p style="color:#888; font-size:0.9em; margin:0;">保存済みプリセットはありません</p>';
+    return;
+  }
+  container.innerHTML = '';
+  names.forEach(name => {
+    const row = document.createElement('div');
+    row.className = 'adm-preset-row';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = name;
+
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = '読み込み';
+    loadBtn.onclick = () => {
+      const rates = getRatePresets()[name];
+      if (!rates) return;
+      document.getElementById('adm_basic').value     = rates.basic;
+      document.getElementById('adm_t1').value        = rates.t1;
+      document.getElementById('adm_t2').value        = rates.t2;
+      document.getElementById('adm_t3').value        = rates.t3;
+      document.getElementById('adm_renewable').value = rates.renewable;
+      document.getElementById('adm_fuel').value      = rates.fuel;
+      document.getElementById('admPresetName').value = name;
+    };
+
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '削除';
+    delBtn.className = 'adm-preset-del';
+    delBtn.onclick = () => {
+      if (!confirm(`"${name}" を削除しますか？`)) return;
+      deleteRatePreset(name);
+      refreshPresetList();
+      refreshCompanySelect();
+    };
+
+    row.appendChild(nameSpan);
+    row.appendChild(loadBtn);
+    row.appendChild(delBtn);
+    container.appendChild(row);
+  });
 }
 
 // グラフ表示切替ボタンを描画
@@ -1714,6 +1829,16 @@ function drawCumulativeChart(data) {
     <button id="admReset" onclick="resetAdminSettings()">🔄 デフォルトに戻す</button>
     <span id="admSaveMsg" style="align-self:center; font-size:0.9em;"></span>
   </div>
+
+  <h3>プリセット管理</h3>
+  <p style="font-size:0.85em; color:#666; margin:4px 0 10px;">現在の料金設定に名前をつけて保存すると、メイン画面の「電力会社」ドロップダウンに追加されます。中部電力の単価が変わった場合も、上の設定を変更して新しい名前で保存できます。</p>
+  <div class="adm-btn-row" style="justify-content:flex-start; margin-top:8px;">
+    <input type="text" id="admPresetName" placeholder="プリセット名（例：中部電力2025年度）" style="flex:1; max-width:320px; padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.95em;">
+    <button onclick="saveCurrentAsPreset()" style="background:#3a86ff; color:white; padding:8px 18px; border:none; border-radius:6px; cursor:pointer;">💾 プリセットとして保存</button>
+    <span id="admPresetMsg" style="align-self:center; font-size:0.9em;"></span>
+  </div>
+
+  <div id="admPresetList" style="margin-top:14px;"></div>
 </div>
 
 </body>
