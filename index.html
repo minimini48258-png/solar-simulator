@@ -173,15 +173,10 @@
   <label>電力会社：
     <select id="companySelect" onchange="applyCompanyPreset(this.value)">
       <option value="chubu">中部電力</option>
-      <option value="tokyo">東京電力（概算）</option>
-      <option value="kansai">関西電力（概算）</option>
-      <option value="tohoku">東北電力（概算）</option>
-      <option value="kyushu">九州電力（概算）</option>
-      <option value="chugoku">中国電力（概算）</option>
-      <option value="custom">カスタム（手動設定）</option>
+      <option value="custom">カスタム（?editで設定）</option>
     </select>
   </label>
-  <span class="company-note">※概算値。「?edit」の管理者設定で詳細変更できます。</span>
+  <span class="company-note">カスタムの場合は <code>?edit</code> の管理者設定で料金を変更・保存できます。</span>
 </div>
 
 <div class="slider-input-pair">
@@ -1672,19 +1667,7 @@ function drawCumulativeChart(data) {
   <h2>⚙ 編集者設定</h2>
   <p class="adm-note">URL末尾に <code>?edit</code> を付けると表示されます。設定はブラウザに保存されます。</p>
 
-  <h3>電力会社 料金設定</h3>
-  <p style="font-size:0.85em; color:#666; margin:4px 0 10px;">
-    プリセットを選ぶと概算値が自動入力されます。実際の料金は各電力会社の最新情報をご確認ください。<br>
-    <select onchange="applyCompanyPreset(this.value); populateAdminForm();" style="margin-top:6px; padding:4px 8px;">
-      <option value="chubu">中部電力</option>
-      <option value="tokyo">東京電力（概算）</option>
-      <option value="kansai">関西電力（概算）</option>
-      <option value="tohoku">東北電力（概算）</option>
-      <option value="kyushu">九州電力（概算）</option>
-      <option value="chugoku">中国電力（概算）</option>
-    </select>
-    を選択して自動入力 → 必要に応じて下記で微調整
-  </p>
+  <h3>料金設定（カスタム）</h3>
   <table>
     <thead><tr><th>項目</th><th>値</th><th>単位</th><th>説明</th></tr></thead>
     <tbody>
