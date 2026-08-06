@@ -139,6 +139,15 @@
     .adm-preset-row button { padding: 4px 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 0.85em; background: #3a86ff; color: white; }
     .adm-preset-del { background: #e74c3c !important; }
 
+    /* 計算式パネル */
+    .adm-formula { border: 1px solid #d0ddf0; border-radius: 8px; margin: 0 0 24px; background: #f7faff; }
+    .adm-formula summary { padding: 12px 16px; cursor: pointer; font-weight: bold; color: #2a5fc1; font-size: 0.97em; user-select: none; }
+    .adm-formula summary:hover { background: #eef4ff; border-radius: 8px; }
+    .adm-formula-body { padding: 4px 20px 18px; }
+    .adm-formula-body h4 { margin: 16px 0 6px; font-size: 0.93em; color: #444; border-left: 3px solid #3a86ff; padding-left: 8px; }
+    .adm-formula-box { background: #fff; border: 1px solid #dce8ff; border-radius: 6px; padding: 10px 14px; font-size: 0.88em; font-family: monospace; line-height: 1.8; color: #222; white-space: pre-wrap; overflow-x: auto; }
+    .adm-formula-note { font-size: 0.82em; color: #888; margin: 4px 0 0; }
+
     /* グラフ表示切替 */
     .chart-toggles { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -18px 0 22px; }
     .ct-btn { padding: 4px 12px; border-radius: 14px; border: 2px solid transparent; font-size: 0.8em; cursor: pointer; background: white; transition: opacity 0.2s; white-space: nowrap; }
@@ -1781,6 +1790,65 @@ function drawCumulativeChart(data) {
 <div id="adminPanel">
   <h2>⚙ 編集者設定</h2>
   <p class="adm-note">URL末尾に <code>?edit</code> を付けると表示されます。設定はブラウザに保存されます。</p>
+
+  <!-- 計算式の説明 -->
+  <details class="adm-formula">
+    <summary>📐 シミュレーションで使われている計算式</summary>
+
+    <div class="adm-formula-body">
+
+      <h4>① 月別発電量</h4>
+      <div class="adm-formula-box">
+        月別発電量 (kWh) = パネル容量 (kW) × kWあたり年間発電量 (kWh) × <b>月別係数</b> × <b>方角係数</b>
+      </div>
+      <p class="adm-formula-note">月別係数・方角係数は下の「パネル方角別 発電量係数」「月別発電係数」で設定します。</p>
+
+      <h4>② 自己消費・余剰・購入</h4>
+      <div class="adm-formula-box">
+        昼間使用量 = 月間使用量 × 昼間使用割合<br>
+        余剰電力   = max(発電量 − 昼間使用量, 0)<br>
+        購入電力   = 発電量 &gt; 昼間使用量 の場合: 夜間使用量<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;それ以外: 月間使用量 − 発電量
+      </div>
+
+      <h4>③ 電気料金（中部電力 三段階料金）</h4>
+      <div class="adm-formula-box">
+        電気料金 = <b>基本料金</b><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <b>第1段階単価</b> × min(購入電力, 120)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <b>第2段階単価</b> × max(min(購入電力, 300) − 120, 0)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <b>第3段階単価</b> × max(購入電力 − 300, 0)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ (<b>再エネ賦課金</b> + <b>燃料調整費</b>) × 購入電力
+      </div>
+      <p class="adm-formula-note">太字の値が下の「料金設定」で変更できる項目です。</p>
+
+      <h4>④ 相乗りくん月額（定額）</h4>
+      <div class="adm-formula-box">
+        基準発電量 = floor( floor(kW × 100) ÷ 100 × 1350 ÷ 12 )  [kWh/月]<br>
+        月額 = 基準発電量 × 単価<br><br>
+        単価の推移：1〜10年目 = UIスライダー値（デフォルト21円）<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;11〜12年目 = 7円 ／ 13年目以降 = 0円
+      </div>
+
+      <h4>⑤ 売電収入（FIT）</h4>
+      <div class="adm-formula-box">
+        売電収入 = 余剰電力 × FIT単価<br><br>
+        FIT単価の推移：1〜4年目 = 24円<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;5〜10年目 = 8.5円 ／ 11年目以降 = 7円
+      </div>
+
+      <h4>⑥ 毎月の合計支払い</h4>
+      <div class="adm-formula-box">
+        合計 = 相乗りくん月額 + 電気料金（購入分） − 売電収入<br>
+        比較（今まで）= 電気料金（使用量全体） ※相乗りくん・売電なし
+      </div>
+
+      <h4>⑦ CO₂削減量</h4>
+      <div class="adm-formula-box">
+        年間CO₂削減量 = 年間発電量 (kWh) × 0.00035 (t-CO₂/kWh)
+      </div>
+
+    </div>
+  </details>
 
   <h3>料金設定（カスタム）</h3>
   <table>
