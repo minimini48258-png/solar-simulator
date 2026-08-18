@@ -1739,23 +1739,104 @@ function drawMonthlyChart(year) {
 function drawYearlyChart(data) {
   const ctx = document.getElementById('yearlyChart').getContext('2d');
   if (yearlyChart) yearlyChart.destroy();
-  const style = getChartStyle();
+
+  // 売電収入のハッチパターンを生成
+  const pc = document.createElement('canvas');
+  pc.width = 8; pc.height = 8;
+  const px = pc.getContext('2d');
+  px.fillStyle = 'rgba(255,185,0,0.22)';
+  px.fillRect(0, 0, 8, 8);
+  px.strokeStyle = 'rgba(195,110,0,0.85)';
+  px.lineWidth = 1.5;
+  [[-2,6,6,-2],[0,8,8,0],[2,10,10,2]].forEach(([x1,y1,x2,y2]) => {
+    px.beginPath(); px.moveTo(x1,y1); px.lineTo(x2,y2); px.stroke();
+  });
+  const hatch = ctx.createPattern(pc, 'repeat');
+
   yearlyChart = new Chart(ctx, {
-    type: 'line',
+    type: 'bar',
     data: {
       labels: data.map(d => `${d.年}年目`),
       datasets: [
-        { label: '年別合計', data: data.map(d => d.合計), borderColor: 'black', ...style },
-        { label: '今までの支払い', data: data.map(d => d.今までの支払い), borderColor: 'gray', borderDash: [5, 5], ...style },
-        { label: '相乗りくん支払額', data: data.map(d => d.相乗りくん支払額), borderColor: 'blue', ...style },
-        { label: '中電支払額', data: data.map(d => d.中電支払額), borderColor: 'red', ...style },
-        { label: '売電収入', data: data.map(d => d.売電収入), borderColor: 'green', ...style }
+        {
+          label: '電力会社への支払い',
+          data: data.map(d => Math.round(d.中電支払額)),
+          backgroundColor: 'rgba(66,133,244,0.82)',
+          borderColor: 'rgba(30,80,180,0.9)',
+          borderWidth: 1,
+          stack: 'total',
+          order: 2,
+        },
+        {
+          label: '相乗りくん支払額',
+          data: data.map(d => Math.round(d.相乗りくん支払額)),
+          backgroundColor: 'rgba(255,165,0,0.85)',
+          borderColor: 'rgba(195,110,0,0.9)',
+          borderWidth: 1,
+          stack: 'total',
+          order: 2,
+        },
+        {
+          label: '売電収入',
+          data: data.map(d => Math.round(d.売電収入)),
+          backgroundColor: hatch,
+          borderColor: 'rgba(195,110,0,0.7)',
+          borderWidth: 1,
+          stack: 'total',
+          order: 2,
+        },
+        {
+          label: '実質支払い合計',
+          data: data.map(d => Math.round(d.合計)),
+          type: 'line',
+          borderColor: '#333',
+          backgroundColor: 'transparent',
+          pointBackgroundColor: '#ff6600',
+          pointBorderColor: '#ff6600',
+          pointRadius: 3,
+          borderWidth: 2.5,
+          tension: 0.15,
+          order: 1,
+        },
+        {
+          label: '今までの支払い（参考）',
+          data: data.map(d => Math.round(d.今までの支払い)),
+          type: 'line',
+          borderColor: '#aaa',
+          borderDash: [6, 4],
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          borderWidth: 2,
+          order: 1,
+        },
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: true }, tooltip: { enabled: true } },
-      scales: { y: { beginAtZero: true } }
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            label: item => ` ${item.dataset.label}: ${item.parsed.y.toLocaleString()} 円`,
+            afterBody: items => {
+              const chuden = items.find(i => i.datasetIndex === 0)?.parsed.y || 0;
+              const ainori = items.find(i => i.datasetIndex === 1)?.parsed.y || 0;
+              const sell   = items.find(i => i.datasetIndex === 2)?.parsed.y || 0;
+              return [`─────────────────`, `実質合計: ${(chuden + ainori - sell).toLocaleString()} 円/年`];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          title: { display: true, text: '円/年' },
+          ticks: { callback: v => v >= 10000 ? `${Math.round(v/10000)}万` : v }
+        }
+      }
     }
   });
   renderChartToggles('yearlyChart', yearlyChart);
