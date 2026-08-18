@@ -1816,18 +1816,6 @@ function drawYearlyChart(data) {
           tension: 0.15,
           order: 1,
         },
-        // 折れ線：今までの支払い（水平参考線）
-        {
-          label: '今までの支払い（参考）',
-          data: Array(labels.length).fill(prevCost),
-          type: 'line',
-          borderColor: '#aaa',
-          borderDash: [6, 4],
-          backgroundColor: 'transparent',
-          pointRadius: 0,
-          borderWidth: 2,
-          order: 1,
-        },
       ]
     },
     options: {
