@@ -1740,7 +1740,7 @@ function drawYearlyChart(data) {
   const ctx = document.getElementById('yearlyChart').getContext('2d');
   if (yearlyChart) yearlyChart.destroy();
 
-  // 売電収入のハッチパターンを生成
+  // 売電収入のハッチパターン
   const pc = document.createElement('canvas');
   pc.width = 8; pc.height = 8;
   const px = pc.getContext('2d');
@@ -1753,41 +1753,59 @@ function drawYearlyChart(data) {
   });
   const hatch = ctx.createPattern(pc, 'repeat');
 
+  // 参加前の電気代（モデル上は全年同額）を先頭バーに表示
+  const prevCost = Math.round(data[0].今までの支払い);
+  const labels = ['参加前', ...data.map(d => `${d.年}年目`)];
+  const pad = arr => [null, ...arr]; // 先頭に参加前スロットを追加
+
   yearlyChart = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: data.map(d => `${d.年}年目`),
+      labels,
       datasets: [
+        // 参加前棒（灰色）
+        {
+          label: '参加前の電気代',
+          data: [prevCost, ...data.map(() => null)],
+          backgroundColor: 'rgba(150,150,150,0.65)',
+          borderColor: 'rgba(100,100,100,0.8)',
+          borderWidth: 1,
+          stack: 'cost',
+          order: 2,
+        },
+        // 支出：プラス方向
         {
           label: '電力会社への支払い',
-          data: data.map(d => Math.round(d.中電支払額)),
+          data: pad(data.map(d => Math.round(d.中電支払額))),
           backgroundColor: 'rgba(66,133,244,0.82)',
           borderColor: 'rgba(30,80,180,0.9)',
           borderWidth: 1,
-          stack: 'total',
+          stack: 'cost',
           order: 2,
         },
         {
           label: '相乗りくん支払額',
-          data: data.map(d => Math.round(d.相乗りくん支払額)),
+          data: pad(data.map(d => Math.round(d.相乗りくん支払額))),
           backgroundColor: 'rgba(255,165,0,0.85)',
           borderColor: 'rgba(195,110,0,0.9)',
           borderWidth: 1,
-          stack: 'total',
+          stack: 'cost',
           order: 2,
         },
+        // 売電収入：マイナス方向（別スタックで0以下に積算）
         {
           label: '売電収入',
-          data: data.map(d => Math.round(d.売電収入)),
+          data: pad(data.map(d => -Math.round(d.売電収入))),
           backgroundColor: hatch,
           borderColor: 'rgba(195,110,0,0.7)',
           borderWidth: 1,
-          stack: 'total',
+          stack: 'income',
           order: 2,
         },
+        // 折れ線：実質支払い合計（中電＋相乗り－売電）
         {
           label: '実質支払い合計',
-          data: data.map(d => Math.round(d.合計)),
+          data: pad(data.map(d => Math.round(d.合計))),
           type: 'line',
           borderColor: '#333',
           backgroundColor: 'transparent',
@@ -1798,9 +1816,10 @@ function drawYearlyChart(data) {
           tension: 0.15,
           order: 1,
         },
+        // 折れ線：今までの支払い（水平参考線）
         {
           label: '今までの支払い（参考）',
-          data: data.map(d => Math.round(d.今までの支払い)),
+          data: Array(labels.length).fill(prevCost),
           type: 'line',
           borderColor: '#aaa',
           borderDash: [6, 4],
@@ -1818,12 +1837,10 @@ function drawYearlyChart(data) {
         legend: { display: true },
         tooltip: {
           callbacks: {
-            label: item => ` ${item.dataset.label}: ${item.parsed.y.toLocaleString()} 円`,
-            afterBody: items => {
-              const chuden = items.find(i => i.datasetIndex === 0)?.parsed.y || 0;
-              const ainori = items.find(i => i.datasetIndex === 1)?.parsed.y || 0;
-              const sell   = items.find(i => i.datasetIndex === 2)?.parsed.y || 0;
-              return [`─────────────────`, `実質合計: ${(chuden + ainori - sell).toLocaleString()} 円/年`];
+            label: item => {
+              const v = item.parsed.y;
+              const abs = Math.abs(v).toLocaleString();
+              return ` ${item.dataset.label}: ${v < 0 ? '+' : ''}${abs} 円`;
             }
           }
         }
@@ -1832,9 +1849,13 @@ function drawYearlyChart(data) {
         x: { stacked: true },
         y: {
           stacked: true,
-          beginAtZero: true,
           title: { display: true, text: '円/年' },
-          ticks: { callback: v => v >= 10000 ? `${Math.round(v/10000)}万` : v }
+          ticks: {
+            callback: v => {
+              const m = Math.round(Math.abs(v) / 10000);
+              return v === 0 ? '0' : `${v < 0 ? '+' : ''}${m}万`;
+            }
+          }
         }
       }
     }
