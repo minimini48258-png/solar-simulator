@@ -1714,23 +1714,122 @@ function drawMonthlyChart(year) {
   const data = monthlyYearlyData[year - 1];
   const ctx = document.getElementById('monthlyChart').getContext('2d');
   if (monthlyChart) monthlyChart.destroy();
-  const style = getChartStyle();
+
+  // 売電収入のハッチパターン
+  const pc = document.createElement('canvas');
+  pc.width = 8; pc.height = 8;
+  const px = pc.getContext('2d');
+  px.fillStyle = 'rgba(255,185,0,0.22)';
+  px.fillRect(0, 0, 8, 8);
+  px.strokeStyle = 'rgba(195,110,0,0.85)';
+  px.lineWidth = 1.5;
+  [[-2,6,6,-2],[0,8,8,0],[2,10,10,2]].forEach(([x1,y1,x2,y2]) => {
+    px.beginPath(); px.moveTo(x1,y1); px.lineTo(x2,y2); px.stroke();
+  });
+  const hatch = ctx.createPattern(pc, 'repeat');
+
+  const round = arr => arr.map(v => Math.round(v));
+
   monthlyChart = new Chart(ctx, {
-    type: 'line',
+    type: 'bar',
     data: {
       labels: months,
       datasets: [
-        { label: '合計', data: data.合計, borderColor: 'black', fill: true, ...style },
-        { label: '相乗りくん支払額', data: data.相乗りくん支払額, borderColor: 'blue', ...style },
-        { label: '中電支払額', data: data.中電支払額, borderColor: 'red', ...style },
-        { label: '売電収入', data: data.売電収入, borderColor: 'green', ...style },
-        { label: '今までの支払い', data: data.今までの支払い, borderColor: 'gray', borderDash: [5, 5], ...style }
+        // 支出（プラス方向・スタック）
+        {
+          label: '電力会社への支払い',
+          data: round(data.中電支払額),
+          backgroundColor: 'rgba(66,133,244,0.82)',
+          borderColor: 'rgba(30,80,180,0.9)',
+          borderWidth: 1,
+          stack: 'cost',
+          order: 2,
+        },
+        {
+          label: '相乗りくん支払額',
+          data: round(data.相乗りくん支払額),
+          backgroundColor: 'rgba(255,165,0,0.85)',
+          borderColor: 'rgba(195,110,0,0.9)',
+          borderWidth: 1,
+          stack: 'cost',
+          order: 2,
+        },
+        // 売電収入（マイナス方向・収入として下に表示）
+        {
+          label: '売電収入',
+          data: round(data.売電収入).map(v => -v),
+          backgroundColor: hatch,
+          borderColor: 'rgba(195,110,0,0.7)',
+          borderWidth: 1,
+          stack: 'income',
+          order: 2,
+        },
+        // 実質支払い合計（折れ線）
+        {
+          label: '実質支払い合計',
+          data: round(data.合計),
+          type: 'line',
+          borderColor: '#222',
+          backgroundColor: 'transparent',
+          pointBackgroundColor: '#ff6600',
+          pointBorderColor: '#ff6600',
+          pointRadius: 4,
+          borderWidth: 2.5,
+          tension: 0.3,
+          order: 1,
+        },
+        // 参加前の支払い（月別・点線）：季節変動があるので月ごとに表示
+        {
+          label: '参加前の支払い',
+          data: round(data.今までの支払い),
+          type: 'line',
+          borderColor: '#aaa',
+          borderDash: [6, 4],
+          backgroundColor: 'transparent',
+          pointRadius: 3,
+          pointBackgroundColor: '#aaa',
+          borderWidth: 2,
+          tension: 0.3,
+          order: 1,
+        },
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: true }, tooltip: { enabled: true } },
-      scales: { y: { beginAtZero: true } }
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            label: item => {
+              if (item.datasetIndex === 2) {
+                return ` 売電収入: +${Math.abs(item.parsed.y).toLocaleString()} 円（収入）`;
+              }
+              return ` ${item.dataset.label}: ${item.parsed.y.toLocaleString()} 円`;
+            },
+            afterBody: items => {
+              const chuden = items.find(i => i.datasetIndex === 0)?.parsed.y || 0;
+              const ainori = items.find(i => i.datasetIndex === 1)?.parsed.y || 0;
+              const sell   = Math.abs(items.find(i => i.datasetIndex === 2)?.parsed.y || 0);
+              const before = items.find(i => i.datasetIndex === 4)?.parsed.y || 0;
+              const net    = chuden + ainori - sell;
+              const saving = Math.round(before - net);
+              if (saving <= 0) return [];
+              return [`──────────────`, `▼ ${saving.toLocaleString()} 円 / 月のお得`];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true },
+        y: {
+          stacked: true,
+          title: { display: true, text: '円/月' },
+          ticks: {
+            callback: v => v === 0 ? '0' : `${v < 0 ? '+' : ''}${Math.round(Math.abs(v) / 1000)}k`
+          }
+        }
+      }
     }
   });
   renderChartToggles('monthlyChart', monthlyChart);
