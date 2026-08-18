@@ -1730,15 +1730,25 @@ function drawMonthlyChart(year) {
 
   const round = arr => arr.map(v => Math.round(v));
 
+  const chudenD  = round(data.中電支払額);
+  const ainoriD  = round(data.相乗りくん支払額);
+  const sellD    = round(data.売電収入).map(v => -v);
+  const totalD   = round(data.合計);
+  const beforeD  = round(data.今までの支払い);
+
+  // 棒グラフ（y軸・stacked）と折れ線（y2軸・非stacked）を同じ範囲に合わせる
+  const maxVal = Math.max(...chudenD.map((v, i) => v + ainoriD[i]), ...beforeD) * 1.1;
+  const minVal = Math.min(0, ...sellD) * 1.1;
+
   monthlyChart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: months,
       datasets: [
-        // 支出（プラス方向・スタック）
+        // 支出（プラス方向・スタック）→ y軸
         {
           label: '電力会社への支払い',
-          data: round(data.中電支払額),
+          data: chudenD,
           backgroundColor: 'rgba(66,133,244,0.82)',
           borderColor: 'rgba(30,80,180,0.9)',
           borderWidth: 1,
@@ -1747,28 +1757,29 @@ function drawMonthlyChart(year) {
         },
         {
           label: '相乗りくん支払額',
-          data: round(data.相乗りくん支払額),
+          data: ainoriD,
           backgroundColor: 'rgba(255,165,0,0.85)',
           borderColor: 'rgba(195,110,0,0.9)',
           borderWidth: 1,
           stack: 'cost',
           order: 2,
         },
-        // 売電収入（マイナス方向・収入として下に表示）
+        // 売電収入（マイナス方向）→ y軸
         {
           label: '売電収入',
-          data: round(data.売電収入).map(v => -v),
+          data: sellD,
           backgroundColor: hatch,
           borderColor: 'rgba(195,110,0,0.7)',
           borderWidth: 1,
           stack: 'income',
           order: 2,
         },
-        // 実質支払い合計（折れ線）
+        // 折れ線はスタックの影響を受けない別軸（y2）に割り当て
         {
           label: '実質支払い合計',
-          data: round(data.合計),
+          data: totalD,
           type: 'line',
+          yAxisID: 'y2',
           borderColor: '#222',
           backgroundColor: 'transparent',
           pointBackgroundColor: '#ff6600',
@@ -1778,11 +1789,11 @@ function drawMonthlyChart(year) {
           tension: 0.3,
           order: 1,
         },
-        // 参加前の支払い（月別・点線）：季節変動があるので月ごとに表示
         {
           label: '参加前の支払い',
-          data: round(data.今までの支払い),
+          data: beforeD,
           type: 'line',
+          yAxisID: 'y2',
           borderColor: '#aaa',
           borderDash: [6, 4],
           backgroundColor: 'transparent',
@@ -1812,8 +1823,7 @@ function drawMonthlyChart(year) {
               const ainori = items.find(i => i.datasetIndex === 1)?.parsed.y || 0;
               const sell   = Math.abs(items.find(i => i.datasetIndex === 2)?.parsed.y || 0);
               const before = items.find(i => i.datasetIndex === 4)?.parsed.y || 0;
-              const net    = chuden + ainori - sell;
-              const saving = Math.round(before - net);
+              const saving = Math.round(before - (chuden + ainori - sell));
               if (saving <= 0) return [];
               return [`──────────────`, `▼ ${saving.toLocaleString()} 円 / 月のお得`];
             }
@@ -1824,10 +1834,17 @@ function drawMonthlyChart(year) {
         x: { stacked: true },
         y: {
           stacked: true,
+          min: minVal, max: maxVal,
           title: { display: true, text: '円/月' },
-          ticks: {
-            callback: v => v === 0 ? '0' : `${v < 0 ? '+' : ''}${Math.round(Math.abs(v) / 1000)}k`
-          }
+          ticks: { callback: v => v === 0 ? '0' : `${v < 0 ? '+' : ''}${Math.round(Math.abs(v) / 1000)}k` }
+        },
+        // 折れ線専用軸：非スタック・非表示・y軸と同じ範囲
+        y2: {
+          stacked: false,
+          display: false,
+          position: 'left',
+          min: minVal, max: maxVal,
+          grid: { display: false }
         }
       }
     }
@@ -1856,6 +1873,10 @@ function drawYearlyChart(data) {
   const prevCost = Math.round(data[0].今までの支払い);
   const labels = ['参加前', ...data.map(d => `${d.年}年目`)];
   const pad = arr => [null, ...arr]; // 先頭に参加前スロットを追加
+
+  // y / y2 軸の範囲を合わせるために手動計算
+  const yMaxVal = Math.max(prevCost, ...data.map(d => Math.round(d.中電支払額 + d.相乗りくん支払額))) * 1.1;
+  const yMinVal = Math.min(0, ...data.map(d => -Math.round(d.売電収入))) * 1.1;
 
   yearlyChart = new Chart(ctx, {
     type: 'bar',
@@ -1901,11 +1922,12 @@ function drawYearlyChart(data) {
           stack: 'income',
           order: 2,
         },
-        // 折れ線：実質支払い合計（中電＋相乗り－売電）
+        // 折れ線：実質支払い合計（y2軸で非スタック表示）
         {
           label: '実質支払い合計',
           data: pad(data.map(d => Math.round(d.合計))),
           type: 'line',
+          yAxisID: 'y2',
           borderColor: '#333',
           backgroundColor: 'transparent',
           pointBackgroundColor: '#ff6600',
@@ -1936,6 +1958,7 @@ function drawYearlyChart(data) {
         x: { stacked: true },
         y: {
           stacked: true,
+          min: yMinVal, max: yMaxVal,
           title: { display: true, text: '円/年' },
           ticks: {
             callback: v => {
@@ -1943,7 +1966,8 @@ function drawYearlyChart(data) {
               return v === 0 ? '0' : `${v < 0 ? '+' : ''}${m}万`;
             }
           }
-        }
+        },
+        y2: { stacked: false, display: false, position: 'left', min: yMinVal, max: yMaxVal, grid: { display: false } }
       }
     }
   });
